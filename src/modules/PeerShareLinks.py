@@ -38,7 +38,8 @@ class PeerShareLinks:
 
 
     def getLink(self, Configuration: str, Peer: str) -> list[PeerShareLink]:
-        self.__getSharedLinks()
+        # Links are loaded on init and after writes. Safe with exactly one gunicorn worker;
+        # multiple processes would each keep an independent, stale cache.
         return list(filter(lambda x : x.Configuration == Configuration and x.Peer == Peer, self.Links))
 
     def getLinkByID(self, ShareID: str) -> list[PeerShareLink]:
