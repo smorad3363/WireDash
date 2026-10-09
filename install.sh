@@ -7,14 +7,39 @@ REPO=smorad3363/WireDash
 if [[ -z "${WIREDASH_SOURCE_SHA:-}" ]]; then
   command -v curl >/dev/null || { echo 'Missing curl' >&2; exit 1; }
   command -v python3 >/dev/null || { echo 'Missing python3' >&2; exit 1; }
-  resolved=$(curl -fsSL --retry 3 "https://api.github.com/repos/$REPO/commits/main" |
-    python3 -c 'import json,sys; print(json.load(sys.stdin)["sha"])') ||
-      { echo 'Could not resolve latest WireDash release commit' >&2; exit 1; }
-  [[ "$resolved" =~ ^[a-f0-9]{40}$ ]] || { echo 'Invalid release SHA' >&2; exit 1; }
+  # Prefer the last successfully published SHA: raw.githubusercontent.com is
+  # already required to download this installer. GitHub API connectivity is
+  # optional (frequently unavailable from restricted VPS networks).
+  tmp_ref=$(mktemp /tmp/wiredash-release.XXXXXXXX)
   tmp_installer=$(mktemp /tmp/wiredash-installer.XXXXXXXX)
-  trap 'rm -f "$tmp_installer"' EXIT
-  curl --proto '=https' --tlsv1.2 -fsSL --retry 3 \
-    "https://raw.githubusercontent.com/$REPO/$resolved/install.sh" -o "$tmp_installer"
+  trap 'rm -f "$tmp_ref" "$tmp_installer"' EXIT
+  resolved=""
+  if curl --proto '=https' --tlsv1.2 -fsSL --connect-timeout 8 --max-time 30 --retry 2 \
+    "https://raw.githubusercontent.com/$REPO/release-pointer/release.sha" -o "$tmp_ref"; then
+    resolved=$(tr -d '\r\n' < "$tmp_ref")
+    if [[ ! "$resolved" =~ ^[a-f0-9]{40}$ ]]; then
+      echo '[wiredash] WARNING: invalid release-pointer SHA' >&2
+      resolved=""
+    fi
+  fi
+  # If release-pointer is temporarily unavailable, use Git to resolve main.
+  # This fallback needs github.com:443 but not api.github.com.
+  if [[ -z "$resolved" ]] && command -v git >/dev/null; then
+    git_ref=$(git -c http.lowSpeedLimit=1024 -c http.lowSpeedTime=10 \
+      ls-remote "https://github.com/$REPO.git" refs/heads/main 2>/dev/null || :)
+    git_sha=${git_ref%%[[:space:]]*}
+    if [[ "$git_sha" =~ ^[a-f0-9]{40}$ ]]; then resolved=$git_sha; fi
+  fi
+  if [[ -z "$resolved" ]]; then
+    echo '[wiredash] ERROR: cannot resolve a release. Verify HTTPS to raw.githubusercontent.com (release-pointer) or github.com:443.' >&2
+    echo '[wiredash] Your server may block GitHub; Ubuntu version and Docker are not the cause.' >&2
+    exit 1
+  fi
+  curl --proto '=https' --tlsv1.2 -fsSL --connect-timeout 8 --max-time 60 --retry 2 \
+    "https://raw.githubusercontent.com/$REPO/$resolved/install.sh" -o "$tmp_installer" ||
+      { echo "[wiredash] ERROR: cannot download pinned installer $resolved from raw.githubusercontent.com" >&2; exit 1; }
+  [[ -s "$tmp_installer" ]] ||
+    { echo '[wiredash] ERROR: downloaded installer is empty' >&2; exit 1; }
   WIREDASH_SOURCE_SHA="$resolved" bash "$tmp_installer" "$@"
   exit $?
 fi
@@ -189,8 +214,9 @@ if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
   if ! docker pull "$IMAGE"; then
     log 'CI image not available; building exact GitHub revision locally'
     mkdir -p "$STAGE/source"
-    curl --proto '=https' --tlsv1.2 -fsSL --retry 3 \
-      "https://api.github.com/repos/$REPO/tarball/$WIREDASH_SOURCE_SHA" -o "$STAGE/source.tar.gz"
+    curl --proto '=https' --tlsv1.2 -fsSL --connect-timeout 10 --max-time 180 --retry 2 \
+      "https://codeload.github.com/$REPO/tar.gz/$WIREDASH_SOURCE_SHA" -o "$STAGE/source.tar.gz" ||
+      die 'Cannot fetch source archive from codeload.github.com; check HTTPS networking or GHCR accessibility'
     tar -xzf "$STAGE/source.tar.gz" -C "$STAGE/source" --strip-components=1
     [[ -f "$STAGE/source/docker/Dockerfile" ]] || die 'source archive incomplete'
     docker build --file "$STAGE/source/docker/Dockerfile" \

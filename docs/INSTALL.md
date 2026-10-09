@@ -8,7 +8,7 @@
 curl -fsSL https://raw.githubusercontent.com/smorad3363/WireDash/main/install.sh | sudo bash
 ```
 
-**Always use the identical command** for new deployments and WireDash-managed upgrades. It resolves the current `main` commit, fetches installer assets by that immutable revision and uses the image tagged `sha-<40-hex-commit>`. The image is pulled from GHCR or built locally from that exact source if GHCR is unavailable. On existing managed deployments it snapshots state, changes only the image declaration, validates, and rolls back on failure. An unmanaged WGDashboard is not automatically migrated; use explicit `--migrate` only after inspecting the current deployment.
+**Always use the identical command** for new deployments and WireDash-managed upgrades. It resolves the **last successfully published main commit** through `release-pointer/release.sha` on `raw.githubusercontent.com`, without depending on `api.github.com`. The Docker publish job promotes the pointer only after publishing an immutable image. If the pointer is unavailable, it can try `git ls-remote` as an alternate resolver. It fetches installer assets by that immutable revision and uses the image tagged `sha-<40-hex-commit>`. The image is pulled from GHCR or built locally from that exact source if GHCR is unavailable. On existing managed deployments it snapshots state, changes only the image declaration, validates, and rolls back on failure. An unmanaged WGDashboard is not automatically migrated; use explicit `--migrate` only after inspecting the current deployment.
 
 Review-only invocation (same entrypoint, no system changes):
 
@@ -21,6 +21,10 @@ Options: `--port 10086`, `--tz Europe/Istanbul`, `--panel-bind 127.0.0.1`,
 The default web port is 10086/TCP; WireGuard is 51820/UDP.
 A regular invocation automatically updates WireDash-managed containers (same command). Upstream/unmanaged migration remains **explicit only**.
 `--uninstall` removes helper units, not containers, volumes, backups or keys.
+
+## GitHub HTTPS / bootstrap failures
+
+Ubuntu 22.04 and Ubuntu 24.04 are supported/tested hosts; WireDash runs in Docker but the bootstrap executes on the host and still needs HTTPS network access. Some VPS networks block `api.github.com:443`. The canonical command no longer calls that API. It needs `raw.githubusercontent.com:443` for version resolution and assets, and `ghcr.io:443` for the preferred image. If the registry is unavailable, local Docker building additionally needs `codeload.github.com:443` and build dependency registries/GitHub. Check host egress with `curl -I --connect-timeout 8 https://raw.githubusercontent.com/` and `curl -I --connect-timeout 8 https://ghcr.io/v2/` (the latter may respond with HTTP 401, showing TLS connectivity). Missing network access cannot be corrected by switching to Ubuntu 24.04.
 
 ## Backup
 

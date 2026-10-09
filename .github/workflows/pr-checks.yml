@@ -27,6 +27,8 @@ jobs:
         run: WIREDASH_SOURCE_SHA=${{ github.event.pull_request.head.sha || github.sha }} bash install.sh --dry-run
       - name: Single-command contract
         run: python3 tests/test_install_contract.py
+      - name: Bootstrap without GitHub API
+        run: python3 tests/test_bootstrap.py
       - name: Docker image build (no publish)
         run: docker build --file docker/Dockerfile --tag wiredash:pr-check .
       - name: Validate code baked into image

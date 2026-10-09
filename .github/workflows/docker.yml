@@ -8,7 +8,7 @@ on:
       - 'v*'
 
 permissions:
-  contents: read
+  contents: write
   packages: write
 
 jobs:
@@ -36,3 +36,28 @@ jobs:
           push: true
           tags: |
             ghcr.io/smorad3363/wiredash:sha-${{ github.sha }}
+      # Do not advertise a new version to the installer until its image is
+      # published. Only main pushes produce the raw-GitHub release pointer.
+      - name: Promote latest successfully published commit
+        if: github.ref == 'refs/heads/main'
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          set -Eeuo pipefail
+          current=$(git ls-remote origin refs/heads/main | awk '{print $1}')
+          if [[ "$current" != "$RELEASE_SHA" ]]; then
+            echo "A newer main commit exists; not promoting old image."
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git fetch origin refs/heads/release-pointer:refs/remotes/origin/release-pointer
+          git switch -C release-pointer origin/release-pointer
+          printf '%s\n' "$RELEASE_SHA" > release.sha
+          git add release.sha
+          if git diff --cached --quiet; then
+            echo 'Release pointer already matches published image.'
+            exit 0
+          fi
+          git commit -m "release: promote published image ${RELEASE_SHA}"
+          git push origin HEAD:refs/heads/release-pointer
