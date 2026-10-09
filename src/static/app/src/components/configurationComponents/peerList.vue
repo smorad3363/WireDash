@@ -125,10 +125,6 @@ const fetchPeerList = async () => {
 	}
 }
 await fetchPeerList()
-		}
-	}
-}
-await fetchPeerList()
 
 // Fetch Peer Interval =====================================
 const fetchPeerListInterval = ref(undefined)
