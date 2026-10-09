@@ -12,6 +12,9 @@ CONTAINER=wgdashboard
 PORT=10086
 TZ=Europe/Istanbul
 BIND=0.0.0.0
+PORT_GIVEN=0
+TZ_GIVEN=0
+BIND_GIVEN=0
 SKIP_BACKUP=0
 SKIP_WATCHDOG=0
 DRY_RUN=0
@@ -31,9 +34,9 @@ EOF
 }
 while (($#)); do
   case "$1" in
-    --port) (($# >= 2)) || die '--port needs value'; PORT=$2; shift 2 ;;
-    --tz) (($# >= 2)) || die '--tz needs value'; TZ=$2; shift 2 ;;
-    --panel-bind) (($# >= 2)) || die '--panel-bind needs value'; BIND=$2; shift 2 ;;
+    --port) (($# >= 2)) || die '--port needs value'; PORT=$2; PORT_GIVEN=1; shift 2 ;;
+    --tz) (($# >= 2)) || die '--tz needs value'; TZ=$2; TZ_GIVEN=1; shift 2 ;;
+    --panel-bind) (($# >= 2)) || die '--panel-bind needs value'; BIND=$2; BIND_GIVEN=1; shift 2 ;;
     --skip-backup) SKIP_BACKUP=1; shift ;;
     --skip-watchdog) SKIP_WATCHDOG=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
@@ -44,6 +47,17 @@ while (($#)); do
     *) die "unknown option: $1" ;;
   esac
 done
+# Honor saved settings on subsequent runs, unless explicitly overridden.
+# Only read expected scalar keys; never source or execute a .env file.
+if [[ -f "$DEST/.env" ]]; then
+  read_setting() {
+    local key=$1
+    sed -n "s/^${key}=//p" "$DEST/.env" | tail -n 1
+  }
+  if ((PORT_GIVEN==0)); then PORT=$(read_setting WGD_PORT); PORT=${PORT:-10086}; fi
+  if ((TZ_GIVEN==0)); then TZ=$(read_setting WGD_TZ); TZ=${TZ:-Europe/Istanbul}; fi
+  if ((BIND_GIVEN==0)); then BIND=$(read_setting WGD_PANEL_BIND); BIND=${BIND:-0.0.0.0}; fi
+fi
 [[ "$PORT" =~ ^[0-9]+$ ]] && ((PORT>=1 && PORT<=65535)) || die 'invalid TCP port'
 [[ "$TZ" =~ ^[a-zA-Z0-9_+/-]+$ ]] || die 'invalid timezone'
 [[ "$BIND" == 0.0.0.0 || "$BIND" == 127.0.0.1 ]] || die 'panel-bind must be 0.0.0.0 or 127.0.0.1'
@@ -109,6 +123,8 @@ verify_port() {
   [[ -z "$output" ]] || die "$mode port $port already in use; refusing to touch another listener"
 }
 step 2 'port and existing deployment checks'
+if ((UPGRADE)) && ! exists; then die '--upgrade requires an existing wgdashboard container'; fi
+if ((MIGRATE)) && ! exists; then die '--migrate requires an existing wgdashboard container'; fi
 if exists && ((UPGRADE == 0 && MIGRATE == 0)); then
   if running && [[ -f "$COMPOSE" ]] && grep -Fq "$IMAGE" "$COMPOSE"; then
     log 'already installed: target image detected; checking remaining components'
@@ -141,6 +157,11 @@ if ((MIGRATE)); then
   migrate_compose=$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project.config_files" }}' "$CONTAINER")
   [[ "$migrate_compose" == /* && -f "$migrate_compose" && "$migrate_compose" != *,* ]] || die 'cannot identify exactly one compose file for migration'
   COMPOSE="$migrate_compose"
+  # wireback expects /opt/wgdashboard/compose.yaml; refuse to replace unrelated files.
+  if [[ "$COMPOSE" != "$DEST/compose.yaml" && -e "$DEST/compose.yaml" ]]; then
+    [[ "$(readlink -f "$DEST/compose.yaml")" == "$(readlink -f "$COMPOSE")" ]] ||
+      die 'managed compose path is occupied by a different deployment; migrate manually'
+  fi
   log "Migrating existing compose: $COMPOSE"
 elif exists && ((UPGRADE)); then
   [[ -f "$COMPOSE" ]] || die 'upgrade requires existing managed compose under /opt/wgdashboard'
@@ -164,16 +185,20 @@ for d in ("/data","/etc/wireguard","/etc/amnezia/amneziawg"):
     print(ms.get(d,""))')
   (("${#mounts[@]}" == 3)) || die 'unexpected volume layout'
   data=${mounts[0]}; wg=${mounts[1]}; awg=${mounts[2]}
-  [[ -d "$data/db" && -d "$wg" && -d "$awg" ]] || die 'missing expected volume paths'
+  [[ -d "$data/db" && -d "$wg" && -d "$awg" && -f "$data/wg-dashboard.ini" ]] || die 'missing expected volume paths/SQLite config'
   tmp=$(mktemp -d /var/backups/wgdashboard/.pre-migrate.XXXXXXXX)
   mkdir -p "$tmp/data" "$tmp/etc/wireguard" "$tmp/etc/amnezia/amneziawg"
   cp -a "$data/." "$tmp/data/"
   cp -a "$wg/." "$tmp/etc/wireguard/"
   cp -a "$awg/." "$tmp/etc/amnezia/amneziawg/"
   # Replace live-copied SQLite files with consistent online SQLite backups.
-  python3 - "$data/db" "$tmp/data/db" <<'PY'
-import pathlib,sqlite3,sys
-source,destination=map(pathlib.Path,sys.argv[1:])
+  python3 - "$data" "$tmp/data/db" <<'PY'
+import configparser,pathlib,sqlite3,sys
+data=pathlib.Path(sys.argv[1]); destination=pathlib.Path(sys.argv[2]); source=data/'db'
+config=configparser.RawConfigParser(strict=False)
+config.read(data/'wg-dashboard.ini')
+if config.get('Database','type',fallback='sqlite').lower() != 'sqlite':
+    raise SystemExit('External database detected: refusing incomplete migration backup')
 files=[p for p in source.rglob('*') if p.is_file() and p.suffix.lower() in ('.db','.sqlite','.sqlite3')]
 if not files: raise SystemExit('No SQLite database detected; abort migration backup')
 for p in files:
@@ -202,7 +227,8 @@ if ((MIGRATE || UPGRADE)); then
   old_compose="$STAGE/previous-compose.yaml"
   cp -a "$COMPOSE" "$old_compose"
   snapshot "/var/backups/wgdashboard/pre-migrate-$(date -u +%Y%m%d-%H%M%S).tar.gz"
-  if ((MIGRATE)); then
+  # Upgrades preserve the existing Compose layout, mappings, volumes and settings.
+  if ((MIGRATE || UPGRADE)); then
     python3 - "$COMPOSE" "$IMAGE" <<'PY'
 import pathlib,re,sys
 path=pathlib.Path(sys.argv[1]); image=sys.argv[2]
@@ -218,8 +244,6 @@ i=found[0]
 lines[i]=re.sub(r'^(    image:\s*).*(\r?\n)$',lambda m:m.group(1)+image+m.group(2),lines[i])
 path.write_text(''.join(lines))
 PY
-  else
-    install -m 600 "$STAGE/compose.yaml" "$COMPOSE"
   fi
 fi
 step 6 'deploy image and verify running HTTP API'
@@ -247,20 +271,38 @@ if ! docker exec -i "$CONTAINER" python3 - /opt/wgdashboard/src/modules/PeerShar
   die 'post-install patch assertion failed; previous image restored if applicable'
 fi
 step 7 'install backup integration'
+if ((MIGRATE)) && [[ "$COMPOSE" != "$DEST/compose.yaml" ]] && [[ ! -e "$DEST/compose.yaml" ]]; then
+  ln -s "$COMPOSE" "$DEST/compose.yaml"
+  log 'Created compatibility link for wireback: /opt/wgdashboard/compose.yaml'
+fi
 if ((SKIP_BACKUP==0)); then
   bash "$STAGE/wgdashbackup.sh" --install
 else log 'backup skipped by request'; fi
 step 8 'install HTTP watchdog'
 if ((SKIP_WATCHDOG==0)); then
-  install -m 700 "$STAGE/wgd-watchdog.sh" /usr/local/bin/wgd-watchdog.sh
-  install -m 644 "$STAGE/wgd-watchdog.service" /etc/systemd/system/wgd-watchdog.service
-  systemctl daemon-reload
-  if [[ "$PORT" != 10086 ]]; then
-    printf 'WGD_PORT=%s\n' "$PORT" > /etc/wgd-watchdog.env
-    chmod 600 /etc/wgd-watchdog.env
+  desired_env=""
+  if [[ "$PORT" != 10086 ]]; then desired_env="WGD_PORT=$PORT"; fi
+  previous_env=""
+  [[ ! -f /etc/wgd-watchdog.env ]] || previous_env=$(cat /etc/wgd-watchdog.env)
+  if cmp -s "$STAGE/wgd-watchdog.sh" /usr/local/bin/wgd-watchdog.sh &&
+     cmp -s "$STAGE/wgd-watchdog.service" /etc/systemd/system/wgd-watchdog.service &&
+     [[ "$desired_env" == "$previous_env" ]] &&
+     systemctl is-active --quiet wgd-watchdog.service &&
+     systemctl is-enabled --quiet wgd-watchdog.service; then
+    log 'already done: watchdog is active; no restart'
+  else
+    install -m 700 "$STAGE/wgd-watchdog.sh" /usr/local/bin/wgd-watchdog.sh
+    install -m 644 "$STAGE/wgd-watchdog.service" /etc/systemd/system/wgd-watchdog.service
+    if [[ -n "$desired_env" ]]; then
+      printf '%s\n' "$desired_env" > /etc/wgd-watchdog.env
+      chmod 600 /etc/wgd-watchdog.env
+    else
+      rm -f /etc/wgd-watchdog.env
+    fi
+    systemctl daemon-reload
+    systemctl enable --now wgd-watchdog.service
+    systemctl restart wgd-watchdog.service
   fi
-  systemctl enable --now wgd-watchdog.service
-  systemctl restart wgd-watchdog.service
 else log 'watchdog skipped by request'; fi
 step 9 'summary'
 log "WireDash $VERSION installed; panel: http://SERVER_IP:$PORT"
