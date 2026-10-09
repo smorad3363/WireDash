@@ -28,6 +28,7 @@ from modules.SystemStatus import SystemStatus
 from modules.PeerShareLinks import PeerShareLinks
 from modules.PeerJobs import PeerJobs
 from modules.PeerLimits import parse_creation_limits
+from modules.ConfigurationReadModel import configuration_info_payload
 from modules.DashboardConfig import DashboardConfig
 from modules.WireguardConfiguration import WireguardConfiguration
 from modules.AmneziaConfiguration import AmneziaConfiguration
@@ -1080,20 +1081,7 @@ def API_getConfigurationInfo():
     configurationName = request.args.get("configurationName")
     if not configurationName or configurationName not in WireguardConfigurations.keys():
         return ResponseObject(False, "Please provide configuration name")
-    return ResponseObject(data={
-        "configurationInfo": WireguardConfigurations[configurationName],
-        # Each Peer holds a parent Configuration object. Serializing that
-        # redundant object per peer inflates responses and leaks server metadata.
-        # The parent configuration is already returned once in configurationInfo.
-        "configurationPeers": [
-            {k: v for k, v in peer.toJson().items() if k != "configuration"}
-            for peer in WireguardConfigurations[configurationName].getPeersList()
-        ],
-        "configurationRestrictedPeers": [
-            {k: v for k, v in peer.toJson().items() if k != "configuration"}
-            for peer in WireguardConfigurations[configurationName].getRestrictedPeersList()
-        ]
-    })
+    return ResponseObject(data=configuration_info_payload(WireguardConfigurations[configurationName]))
 
 @app.get(f'{APP_PREFIX}/api/getPeerHistoricalEndpoints')
 def API_GetPeerHistoricalEndpoints():

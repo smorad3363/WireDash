@@ -50,6 +50,17 @@ jobs:
             grep -Rq "Download:" /opt/wgdashboard/src/static/dist/WGDashboardClient/assets
             grep -Rq "Upload:" /opt/wgdashboard/src/static/dist/WGDashboardClient/assets
           '
+      - name: Synthetic 5000 peers under 50 concurrent API clients
+        run: |
+          # Test-only disposable container. Never attach production volumes or
+          # network, expose listening ports, or touch real WireGuard interfaces.
+          docker run --rm --network none --read-only \
+            --tmpfs /tmp:rw,nosuid,nodev,size=192m \
+            -v "$PWD/tests:/tests:ro" \
+            -e PYTHONPATH=/opt/wgdashboard/src \
+            -w /opt/wgdashboard/src \
+            --entrypoint /opt/wgdashboard/src/venv/bin/python3 wiredash:pr-check \
+            /tests/benchmark_synthetic_api.py --peers 5000 --concurrency 50 --requests 120
       - name: Live HTTP smoke on disposable GitHub runner
         run: |
           set -Eeuo pipefail
