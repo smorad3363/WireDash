@@ -54,7 +54,7 @@ and restores its previous compose/image if startup fails.
 **Note:** the pre-migration archive uses an online SQLite snapshot; non-database volume files
 are copied while the VPN is running, so a restore rehearsal is required before relying on it.
 Existing migrated compose files may retain their original process-only Docker HEALTHCHECK;
-the systemd watchdog still uses the HTTP probe. On migration from a different Compose directory, the installer creates a compatibility symlink under /opt/wgdashboard only after successful checks.
+the systemd watchdog still uses the HTTP probe. On migration from a different Compose directory, the installer creates a compatibility symlink under /opt/wgdashboard only after successful checks; subsequent same-command upgrades dereference this link and keep using the legacy project's original Compose path.
 `--upgrade` is for managed /opt/wgdashboard installations and takes the same snapshot.
 
 ## Verify before production

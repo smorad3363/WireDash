@@ -132,6 +132,12 @@ if ! command -v docker >/dev/null || ! docker compose version >/dev/null 2>&1; t
 fi
 docker info >/dev/null || die 'Docker daemon unavailable'
 docker compose version >/dev/null || die 'Docker Compose v2 unavailable'
+# If a one-time migration created a compatibility symlink, keep using the
+# original absolute Compose path (and therefore original Compose project).
+if [[ -L "$COMPOSE" ]]; then
+  COMPOSE=$(readlink -f "$COMPOSE")
+  [[ -f "$COMPOSE" ]] || die 'stored Compose link is broken; refusing to modify deployment'
+fi
 running() { [[ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null || :)" == true ]]; }
 exists() { docker inspect "$CONTAINER" >/dev/null 2>&1; }
 verify_port() {
@@ -331,6 +337,12 @@ step 7 'install backup integration'
 if ((MIGRATE)) && [[ "$COMPOSE" != "$DEST/compose.yaml" ]] && [[ ! -e "$DEST/compose.yaml" ]]; then
   ln -s "$COMPOSE" "$DEST/compose.yaml"
   log 'Created compatibility link for wireback: /opt/wgdashboard/compose.yaml'
+fi
+if ((MIGRATE)) && [[ ! -f "$DEST/.env" ]]; then
+  # Store the probed port for every future invocation of the SAME command;
+  # do not modify the legacy project's own env file.
+  printf 'WGD_PORT=%s\\nWGD_TZ=%s\\nWGD_PANEL_BIND=%s\\n' "$PORT" "$TZ" "$BIND" > "$DEST/.env"
+  chmod 600 "$DEST/.env"
 fi
 if ((SKIP_BACKUP==0)); then
   bash "$STAGE/wgdashbackup.sh" --install
