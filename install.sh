@@ -144,6 +144,10 @@ verify_port() {
 step 2 'port and existing deployment checks'
 if ((UPGRADE)) && ! exists; then die '--upgrade requires an existing wgdashboard container'; fi
 if ((MIGRATE)) && ! exists; then die '--migrate requires an existing wgdashboard container'; fi
+# Do not overwrite an orphaned Compose deployment just because its container is missing.
+if ! exists && [[ -f "$COMPOSE" ]] && ((UPGRADE == 0 && MIGRATE == 0)); then
+  die "Existing Compose config without running container; inspect before installation"
+fi
 if exists && ((UPGRADE == 0 && MIGRATE == 0)); then
   if running && [[ -f "$COMPOSE" ]] &&
      grep -Eq '^[[:space:]]*image:[[:space:]]+ghcr.io/smorad3363/wiredash:(sha-|v)' "$COMPOSE"; then
