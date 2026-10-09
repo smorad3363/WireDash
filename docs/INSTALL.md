@@ -69,3 +69,7 @@ The fork must be checked against current upstream WGDashboard security releases
 before any tag. After every upstream merge re-run `tests/check_patch.py`,
 rebuild under a **new** immutable version tag, and run the same VM gate.
 Never fetch application files from the moving `main` branch during installation.
+
+## Pinned Amnezia source revisions
+
+The Docker build checks out `WGDashboard/amneziawg-go` at `2ac739347721a985001d71f49fb36d6fcdebe6f9` and `WGDashboard/amneziawg-tools` at `5d6179a6d0842e98dfb349c28cf1bd8e4b9d1079`. Base container image tags and OS package indices may still change; full binary reproducibility requires digest pinning plus dependency locks and is not claimed here.

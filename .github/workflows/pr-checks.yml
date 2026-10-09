@@ -27,3 +27,24 @@ jobs:
         run: docker build --file docker/Dockerfile --tag wiredash:pr-check .
       - name: Validate code baked into image
         run: docker run --rm -v "$PWD/tests:/tests:ro" --entrypoint python3 wiredash:pr-check /tests/check_patch.py /opt/wgdashboard/src/modules/PeerShareLinks.py
+      - name: Live HTTP smoke on disposable GitHub runner
+        run: |
+          set -Eeuo pipefail
+          # The image stays local to this runner. No registry publish or production access.
+          docker tag wiredash:pr-check ghcr.io/smorad3363/wiredash:v1.0.0
+          sed 's/__WIREDASH_TAG__/v1.0.0/g' deploy/compose.yaml > /tmp/wiredash-pr-compose.yaml
+          cleanup() {
+            docker logs --tail 60 wgdashboard || true
+            docker compose -f /tmp/wiredash-pr-compose.yaml -p wiredash-pr down || true
+          }
+          trap cleanup EXIT
+          docker compose -f /tmp/wiredash-pr-compose.yaml -p wiredash-pr up -d --no-deps wgdashboard
+          ok=0
+          for i in $(seq 1 48); do
+            if curl -fsS --max-time 5 http://127.0.0.1:10086/api/handshake >/dev/null; then ok=1; break; fi
+            sleep 5
+          done
+          test "$ok" = 1
+          test "$(docker inspect -f '{{.State.Health.Status}}' wgdashboard)" = healthy
+          docker exec -i wgdashboard python3 - /opt/wgdashboard/src/modules/PeerShareLinks.py < tests/check_patch.py
+          echo 'PASS: panel responds, Docker health=healthy and in-container patch is present'
