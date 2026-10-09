@@ -1,10 +1,27 @@
 #!/usr/bin/env bash
-# WireDash installer. Run only from an immutable version tag; dry-run is read-only.
+# The stable URL on main is a bootstrap. Every actual install/update resolves
+# exactly one immutable main commit and uses matching tagged image and artifacts.
 set -Eeuo pipefail
 umask 077
-VERSION=v1.0.0
 REPO=smorad3363/WireDash
-BASE="https://raw.githubusercontent.com/$REPO/$VERSION"
+if [[ -z "${WIREDASH_SOURCE_SHA:-}" ]]; then
+  command -v curl >/dev/null || { echo 'Missing curl' >&2; exit 1; }
+  command -v python3 >/dev/null || { echo 'Missing python3' >&2; exit 1; }
+  resolved=$(curl -fsSL --retry 3 "https://api.github.com/repos/$REPO/commits/main" |
+    python3 -c 'import json,sys; print(json.load(sys.stdin)["sha"])') ||
+      { echo 'Could not resolve latest WireDash release commit' >&2; exit 1; }
+  [[ "$resolved" =~ ^[a-f0-9]{40}$ ]] || { echo 'Invalid release SHA' >&2; exit 1; }
+  tmp_installer=$(mktemp /tmp/wiredash-installer.XXXXXXXX)
+  trap 'rm -f "$tmp_installer"' EXIT
+  curl --proto '=https' --tlsv1.2 -fsSL --retry 3 \
+    "https://raw.githubusercontent.com/$REPO/$resolved/install.sh" -o "$tmp_installer"
+  WIREDASH_SOURCE_SHA="$resolved" bash "$tmp_installer" "$@"
+  exit $?
+fi
+[[ "$WIREDASH_SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]] ||
+  { echo 'Invalid release revision' >&2; exit 1; }
+VERSION="sha-${WIREDASH_SOURCE_SHA}"
+BASE="https://raw.githubusercontent.com/$REPO/$WIREDASH_SOURCE_SHA"
 IMAGE="ghcr.io/smorad3363/wiredash:$VERSION"
 DEST=/opt/wgdashboard
 COMPOSE="$DEST/compose.yaml"
@@ -29,7 +46,7 @@ usage() {
   cat <<EOF
 Usage: sudo bash install.sh [--port N] [--tz AREA/CITY] [--panel-bind IP]
  [--skip-backup] [--skip-watchdog] [--dry-run] [--upgrade] [--migrate] [--uninstall]
-Release: $VERSION (image $IMAGE). New installs only unless --upgrade/--migrate.
+Revision: $WIREDASH_SOURCE_SHA (image $IMAGE). Same command for fresh installs and managed upgrades.
 EOF
 }
 while (($#)); do
@@ -128,10 +145,16 @@ step 2 'port and existing deployment checks'
 if ((UPGRADE)) && ! exists; then die '--upgrade requires an existing wgdashboard container'; fi
 if ((MIGRATE)) && ! exists; then die '--migrate requires an existing wgdashboard container'; fi
 if exists && ((UPGRADE == 0 && MIGRATE == 0)); then
-  if running && [[ -f "$COMPOSE" ]] && grep -Fq "$IMAGE" "$COMPOSE"; then
-    log 'already installed: target image detected; checking remaining components'
+  if running && [[ -f "$COMPOSE" ]] &&
+     grep -Eq '^[[:space:]]*image:[[:space:]]+ghcr.io/smorad3363/wiredash:(sha-|v)' "$COMPOSE"; then
+    if grep -Fq "$IMAGE" "$COMPOSE"; then
+      log 'already installed: exact revision; no container recreation'
+    else
+      UPGRADE=1
+      log 'Managed WireDash detected: same command performs guarded upgrade'
+    fi
   else
-    die "container '$CONTAINER' exists; use --migrate or --upgrade explicitly"
+    die "Existing '$CONTAINER' is not managed by WireDash; inspect and use --migrate explicitly"
   fi
 elif ! exists; then
   verify_port "$PORT" tcp
@@ -150,6 +173,20 @@ fetch deploy/wgdashbackup.sh "$STAGE/wgdashbackup.sh"
 fetch deploy/wgd-watchdog.sh "$STAGE/wgd-watchdog.sh"
 fetch deploy/wgd-watchdog.service "$STAGE/wgd-watchdog.service"
 fetch tests/check_patch.py "$STAGE/check_patch.py"
+# Prefer the CI-built immutable image. Build the same checked-out SHA locally
+# if GHCR is still private/not published (the one-liner remains usable).
+if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+  if ! docker pull "$IMAGE"; then
+    log 'CI image not available; building exact GitHub revision locally'
+    mkdir -p "$STAGE/source"
+    curl --proto '=https' --tlsv1.2 -fsSL --retry 3 \
+      "https://api.github.com/repos/$REPO/tarball/$WIREDASH_SOURCE_SHA" -o "$STAGE/source.tar.gz"
+    tar -xzf "$STAGE/source.tar.gz" -C "$STAGE/source" --strip-components=1
+    [[ -f "$STAGE/source/docker/Dockerfile" ]] || die 'source archive incomplete'
+    docker build --file "$STAGE/source/docker/Dockerfile" \
+      --tag "$IMAGE" "$STAGE/source" || die 'local Docker image build failed'
+  fi
+fi
 grep -Fq '__WIREDASH_TAG__' "$STAGE/compose.yaml" || die 'template marker missing'
 sed -i "s/__WIREDASH_TAG__/$VERSION/g" "$STAGE/compose.yaml"
 step 4 'deployment config'
@@ -321,6 +358,6 @@ if ((SKIP_WATCHDOG==0)); then
   fi
 else log 'watchdog skipped by request'; fi
 step 9 'summary'
-log "WireDash $VERSION installed; panel: http://SERVER_IP:$PORT"
+log "WireDash $VERSION installed/updated; panel: http://SERVER_IP:$PORT"
 log 'Backup and watchdog never stop the container. Configure Telegram: sudo wireback (option 1)'
 log 'Watchdog logs: journalctl -u wgd-watchdog -f'

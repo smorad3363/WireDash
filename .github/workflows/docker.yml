@@ -1,7 +1,9 @@
-name: Build pinned WireDash image
+name: Build and publish immutable WireDash image
 
 on:
   push:
+    branches:
+      - 'main'
     tags:
       - 'v*'
 
@@ -13,7 +15,7 @@ jobs:
   docker_build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout tagged source
+      - name: Checkout exact source
         uses: actions/checkout@v4
       - name: Verify getLink fix
         run: python3 tests/check_patch.py
@@ -32,4 +34,5 @@ jobs:
           file: ./docker/Dockerfile
           platforms: linux/amd64
           push: true
-          tags: ghcr.io/smorad3363/wiredash:${{ github.ref_name }}
+          tags: |
+            ghcr.io/smorad3363/wiredash:sha-${{ github.sha }}

@@ -3,18 +3,19 @@
 **Review status:** The branch is a proposed implementation, not a released/tested production image.
 The owner must review the upstream base version and security patches, approve the tag, and make the GHCR image public.
 
-## Installation (after tag v1.0.0 is published and CI image is available)
-
-On Ubuntu 22.04 or 24.04 with amd64:
+## Canonical command — both INSTALL and UPDATE
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/smorad3363/WireDash/v1.0.0/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/smorad3363/WireDash/main/install.sh | sudo bash
 ```
 
-For preflight without any side effects, obtain this branch's installer and run `sudo bash install.sh --dry-run`.
-Do **not** pipe this development branch to a production server.
-Installer pins all WireDash downloads and Docker image to the same release tag.
-A full production installation only works after that tag is built and made public.
+**Always use the identical command** for new deployments and WireDash-managed upgrades. It resolves the current `main` commit, fetches installer assets by that immutable revision and uses the image tagged `sha-<40-hex-commit>`. The image is pulled from GHCR or built locally from that exact source if GHCR is unavailable. On existing managed deployments it snapshots state, changes only the image declaration, validates, and rolls back on failure. An unmanaged WGDashboard is not automatically migrated; use explicit `--migrate` only after inspecting the current deployment.
+
+Review-only invocation (same entrypoint, no system changes):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/smorad3363/WireDash/main/install.sh | sudo bash -s -- --dry-run
+```
 
 Options: `--port 10086`, `--tz Europe/Istanbul`, `--panel-bind 127.0.0.1`,
 `--skip-backup`, `--skip-watchdog`, `--dry-run`, `--upgrade`, `--migrate`, `--uninstall`.
@@ -66,10 +67,14 @@ process deaths and the three-recovery cap, verifying peer pings and `wg show`
 throughout. Never do this first on a production VPN.
 
 The fork must be checked against current upstream WGDashboard security releases
-before any tag. After every upstream merge re-run `tests/check_patch.py`,
+before every release merge. After every upstream merge re-run `tests/check_patch.py`,
 rebuild under a **new** immutable version tag, and run the same VM gate.
 Never fetch application files from the moving `main` branch during installation.
 
 ## Pinned Amnezia source revisions
 
 The Docker build checks out `WGDashboard/amneziawg-go` at `2ac739347721a985001d71f49fb36d6fcdebe6f9` and `WGDashboard/amneziawg-tools` at `5d6179a6d0842e98dfb349c28cf1bd8e4b9d1079`. Base container image tags and OS package indices may still change; full binary reproducibility requires digest pinning plus dependency locks and is not claimed here.
+
+## Maintenance contract for future AI editors
+
+The single canonical command in README, this file, and AGENTS.md MUST stay byte-for-byte identical. Only merge reviewed changes to `main`. `.github/workflows/docker.yml` must publish `sha-<commit>` images for `main` commits; `install.sh` resolves that commit and pins every download to it. Keep automatic upgrade behavior and data-preserving rollback. Update tests and all docs together; never introduce separate install and update commands.
