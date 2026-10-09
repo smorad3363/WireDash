@@ -30,7 +30,14 @@ Ubuntu 22.04 and Ubuntu 24.04 are supported/tested hosts; WireDash runs in Docke
 
 After the Docker image passes its normal tests, CI runs an **isolated** performance rehearsal with 5000 non-authenticating fake peer records in a temporary SQLite DB and 50 concurrent loopback HTTP clients (120 requests). The load-test route uses the **same production configuration-info response builder**, real Peer and WireguardConfiguration model serialization, and the real DB peer loader. The test image container has no host/network access, no VPN capabilities and no production mounts. It reports setup time, completed/error requests, p50/p95/p99/max latency, request throughput, CPU usage, and RSS memory in live stdout (no per-user secrets or policy factors). This is a regression/performance characterization on a disposable GitHub runner, **not** an actual authenticated production HTTP benchmark, peer handshake test, or a measurement of VPS performance.
 
-To run the same test manually against a pre-pulled matching image, fetch tests/benchmark_synthetic_api.py from the matching published commit and run it in a **separate** disposable container with `--network none`, `--read-only` and temporary `/tmp`; do not seed the real WGDashboard database or run against the public server. The benchmark command can change the concurrency and request count; default is 5000 fake peers, 50 concurrent clients, 150 total requests. Logs show aggregate metrics only.
+To run the same test on the VPS without writing a single real user, fetch and run the read-only wrapper:
+
+```bash
+curl -fsSLo /tmp/wiredash-benchmark.sh https://raw.githubusercontent.com/smorad3363/WireDash/main/tests/run_synthetic_benchmark.sh
+bash /tmp/wiredash-benchmark.sh 5000 50 120
+```
+
+The wrapper only inspects the currently installed immutable image tag, fetches the exact matching test script by SHA, and runs a separate resource-limited container with `--network none`, `--read-only`, temporary `/tmp` and **no production volumes** or external network. It prints `[LIVE]` CPU, RSS, completed/failed requests updates and a final `[SUMMARY]` with p50/p95/p99 latency, rate, errors, throughput and observed memory high-water mark; no peer keys or personal data are logged. Default: 5000 fake peers, 50 clients and 120 total requests. Arguments may change all three; test is capped to one CPU and 768 MiB on VPS. It is a synthetic API read/serialization test, not a production authenticated panel browser or VPN throughput test.
 
 ## Performance and polling
 

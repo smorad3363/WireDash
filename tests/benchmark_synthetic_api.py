@@ -16,7 +16,6 @@ import json
 import math
 import os
 import pathlib
-import sqlite3
 import statistics
 import tempfile
 import threading
@@ -28,11 +27,16 @@ import sqlalchemy as sa
 from flask import Flask, request
 from flask.json.provider import DefaultJSONProvider
 from sqlalchemy.pool import NullPool
-from werkzeug.serving import make_server
+from werkzeug.serving import make_server, WSGIRequestHandler
 
 from modules.ConfigurationReadModel import configuration_info_payload
 from modules.Peer import Peer
 from modules.WireguardConfiguration import WireguardConfiguration
+
+
+class QuietRequests(WSGIRequestHandler):
+    def log(self, type, message, *args):
+        return
 
 
 class SyntheticJobs:
@@ -210,7 +214,8 @@ def main():
         seed_s = time.perf_counter() - t0
         app = make_app(cfg, args.peers)
         # Bind loopback only, never the VPS public interface.
-        server = make_server("127.0.0.1", 0, app, threaded=True)
+        server = make_server("127.0.0.1", 0, app, threaded=True,
+                             request_handler=QuietRequests)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         endpoint = "http://127.0.0.1:%s" % server.server_port
@@ -218,17 +223,16 @@ def main():
         guard = threading.Lock()
         stop = threading.Event()
         start_gate = threading.Event()
+        peak_rss = [proc.memory_info().rss / 1048576]
         def monitor():
-            high_water = 0
             while not stop.wait(1.0):
                 with guard:
                     n = len(samples)
                     fail = sum(not x["ok"] for x in samples)
                 rss = proc.memory_info().rss / 1048576
-                high_water = max(high_water, rss)
+                peak_rss[0] = max(peak_rss[0], rss)
                 print("[LIVE] completed=%d/%d errors=%d cpu_pct=%.1f rss_mb=%.1f" %
                       (n, args.requests, fail, proc.cpu_percent(None), rss), flush=True)
-            return high_water
 
         def worker(i):
             start_gate.wait()
@@ -275,6 +279,7 @@ def main():
             server.shutdown()
             thread.join(timeout=2)
         result = summary(samples, args.peers, args.concurrency, started, proc)
+        result["rss_peak_mb"] = round(max(peak_rss[0], proc.memory_info().rss / 1048576), 2)
         result["seed_seconds"] = round(seed_s, 3)
         result["endpoints"] = {
             kind: {
