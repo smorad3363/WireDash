@@ -52,7 +52,12 @@ const historyReceivedData = ref({
 const route = useRoute()
 const dashboardStore = DashboardConfigurationStore()
 const fetchRealtimeTrafficInterval = ref(undefined)
+const MAX_REALTIME_POINTS = 120
+let realtimeFetchPending = false
 const fetchRealtimeTraffic = async () => {
+	if (realtimeFetchPending) return
+	realtimeFetchPending = true
+	try {
 	await fetchGet("/api/getWireguardConfigurationRealtimeTraffic", {
 		configurationName: route.params.id
 	}, (res) => {
@@ -72,15 +77,29 @@ const fetchRealtimeTraffic = async () => {
 				historyReceivedData.value.data.push(res.data.recv)
 			}
 		}
+		// Long sessions should not accumulate unbounded Chart.js datasets.
+		for (const history of [historySentData.value, historyReceivedData.value]) {
+			const overflow = history.data.length - MAX_REALTIME_POINTS
+			if (overflow > 0) {
+				history.data.splice(0, overflow)
+				history.timestamp.splice(0, overflow)
+			}
+		}
 	})
+	} finally {
+		realtimeFetchPending = false
+	}
 }
 const toggleFetchRealtimeTraffic = () => {
 	clearInterval(fetchRealtimeTrafficInterval.value)
 	fetchRealtimeTrafficInterval.value = undefined;
 	if (props.configurationInfo.Status){
+		// Seed the first server sample immediately. No 1-second sleep required.
+		fetchRealtimeTraffic()
+		const refreshMs = Math.max(10000, Number(dashboardStore.Configuration.Server.dashboard_refresh_interval) || 60000)
 		fetchRealtimeTrafficInterval.value = setInterval(() => {
-			fetchRealtimeTraffic()
-		}, parseInt(dashboardStore.Configuration.Server.dashboard_refresh_interval))
+			if (!document.hidden) fetchRealtimeTraffic()
+		}, refreshMs)
 	}
 }
 
@@ -161,6 +180,7 @@ const peersRealtimeReceivedData = computed(() => {
 const peersDataUsageChartOption = computed(() => {
 	return {
 		responsive: true,
+		animation: false,
 		plugins: {
 			legend: {
 				display: true
@@ -196,6 +216,7 @@ const peersDataUsageChartOption = computed(() => {
 const realtimePeersChartOption = computed(() => {
 	return {
 		responsive: true,
+		animation: false,
 		plugins: {
 			legend: {
 				display: false

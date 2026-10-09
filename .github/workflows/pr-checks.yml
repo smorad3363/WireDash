@@ -19,6 +19,8 @@ jobs:
         run: python3 tests/check_patch.py
       - name: Peer traffic quota tests
         run: python3 tests/test_peer_limits.py
+      - name: Polling and peer reuse regression tests
+        run: python3 tests/test_performance.py
       - name: ShellCheck
         run: shellcheck -S warning install.sh deploy/wgdashbackup.sh deploy/wgd-watchdog.sh tests/smoke.sh
       - name: Compose parse
