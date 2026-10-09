@@ -157,6 +157,7 @@ class AmneziaConfiguration(WireguardConfiguration):
         self.metadata.create_all(self.engine)
 
     def getPeers(self):
+        cached = {p.id: p for p in self.Peers}
         self.Peers.clear()
         if self.configurationFileChanged():
             with open(self.configPath, 'r') as configFile:
@@ -232,8 +233,13 @@ class AmneziaConfiguration(WireguardConfiguration):
         else:
             with self.engine.connect() as conn:
                 existingPeers = conn.execute(self.peersTable.select()).mappings().fetchall()
-                for i in existingPeers:
-                    self.Peers.append(AmneziaPeer(i, self))
+            for row in existingPeers:
+                peer = cached.get(row["id"])
+                if peer is None:
+                    peer = AmneziaPeer(row, self)
+                else:
+                    peer.refreshFromRow(row)
+                self.Peers.append(peer)
 
     def addPeers(self, peers: list) -> tuple[bool, list, str]:
         result = {
@@ -309,8 +315,15 @@ class AmneziaConfiguration(WireguardConfiguration):
         return True, result['peers'], ""
 
     def getRestrictedPeers(self):
-        self.RestrictedPeers = []
         with self.engine.connect() as conn:
             restricted = conn.execute(self.peersRestrictedTable.select()).mappings().fetchall()
-            for i in restricted:
-                self.RestrictedPeers.append(AmneziaPeer(i, self))
+        cached = {p.id: p for p in getattr(self, "RestrictedPeers", [])}
+        peers = []
+        for row in restricted:
+            peer = cached.get(row["id"])
+            if peer is None:
+                peer = AmneziaPeer(row, self)
+            else:
+                peer.refreshFromRow(row)
+            peers.append(peer)
+        self.RestrictedPeers = peers

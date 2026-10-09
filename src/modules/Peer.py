@@ -44,6 +44,26 @@ class Peer:
         self.getJobs()
         self.getShareLink()
 
+    def refreshFromRow(self, row):
+        """Refresh counters/metadata in place without re-querying peer jobs or links.
+
+        UI refresh and 10-second background polls read the same database rows.
+        Job and share-link associations are maintained by their own write paths.
+        """
+        for field in (
+            "private_key", "DNS", "endpoint_allowed_ip", "name",
+            "total_receive", "total_sent", "total_data", "endpoint",
+            "status", "latest_handshake", "allowed_ip", "cumu_receive",
+            "cumu_sent", "cumu_data", "mtu", "keepalive", "notes",
+            "remote_endpoint", "preshared_key",
+        ):
+            if field in row:
+                setattr(self, field, row[field])
+        # Link writes refresh associations; expired links should not linger.
+        if self.ShareLink:
+            now = datetime.now()
+            self.ShareLink = [link for link in self.ShareLink if link.ExpireDate > now]
+
     def metered_usage(self):
         weight = self.configuration.AllPeerJobs.weight_for(self.configuration.Name, self.id)
         return metered_usage(

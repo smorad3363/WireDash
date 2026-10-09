@@ -367,11 +367,18 @@ class WireguardConfiguration:
             self.DashboardConfig.SetConfig("WireGuardConfiguration", "autostart", d)
 
     def getRestrictedPeers(self):
-        self.RestrictedPeers = []
         with self.engine.connect() as conn:
             restricted = conn.execute(self.peersRestrictedTable.select()).mappings().fetchall()
-            for i in restricted:
-                self.RestrictedPeers.append(Peer(i, self))
+        cached = {p.id: p for p in getattr(self, "RestrictedPeers", [])}
+        peers = []
+        for row in restricted:
+            peer = cached.get(row["id"])
+            if peer is None:
+                peer = Peer(row, self)
+            else:
+                peer.refreshFromRow(row)
+            peers.append(peer)
+        self.RestrictedPeers = peers
 
     def configurationFileChanged(self) :
         mt = os.path.getmtime(self.configPath)
@@ -462,8 +469,14 @@ class WireguardConfiguration:
         else:
             with self.engine.connect() as conn:
                 existingPeers = conn.execute(self.peersTable.select()).mappings().fetchall()
-                for i in existingPeers:
-                    tmpList.append(Peer(i, self))
+            cached = {p.id: p for p in self.Peers}
+            for row in existingPeers:
+                peer = cached.get(row["id"])
+                if peer is None:
+                    peer = Peer(row, self)
+                else:
+                    peer.refreshFromRow(row)
+                tmpList.append(peer)
         self.Peers = tmpList
     
     def logPeersTraffic(self):
@@ -1163,27 +1176,28 @@ class WireguardConfiguration:
         return True, availableAddress
 
     def getRealtimeTrafficUsage(self):
-        stats = psutil.net_io_counters(pernic=True, nowrap=True)
-        if self.Name in stats.keys():
-            stat = stats[self.Name]
-            recv1 = stat.bytes_recv
-            sent1 = stat.bytes_sent
-            time.sleep(1)
-            stats = psutil.net_io_counters(pernic=True, nowrap=True)
-            if self.Name in stats.keys():
-                stat = stats[self.Name]
-                recv2 = stat.bytes_recv
-                sent2 = stat.bytes_sent
-                net_in = round((recv2 - recv1) / 1024 / 1024, 3)
-                net_out = round((sent2 - sent1) / 1024 / 1024, 3)
-                return {
-                    "sent": net_out,
-                    "recv": net_in
-                }
-            else:
-                return { "sent": 0, "recv": 0 }
-        else:
-            return { "sent": 0, "recv": 0 }
+        """Non-blocking MB/s using successive API poll snapshots.
+
+        The previous implementation slept for a full second on each request,
+        tying up a synchronous Gunicorn worker. The initial sample just seeds
+        the counter baseline; subsequent samples calculate an elapsed-time rate.
+        """
+        stat = psutil.net_io_counters(pernic=True, nowrap=True).get(self.Name)
+        if stat is None:
+            self._realtime_traffic_sample = None
+            return {"sent": 0, "recv": 0}
+        sample = (time.monotonic(), stat.bytes_recv, stat.bytes_sent)
+        previous = getattr(self, "_realtime_traffic_sample", None)
+        self._realtime_traffic_sample = sample
+        if previous is None:
+            return {"sent": 0, "recv": 0}
+        elapsed = sample[0] - previous[0]
+        if elapsed <= 0 or sample[1] < previous[1] or sample[2] < previous[2]:
+            return {"sent": 0, "recv": 0}
+        return {
+            "recv": round((sample[1] - previous[1]) / elapsed / (1024 ** 2), 3),
+            "sent": round((sample[2] - previous[2]) / elapsed / (1024 ** 2), 3),
+        }
     
     '''
     Manager WireGuard Configuration Information
