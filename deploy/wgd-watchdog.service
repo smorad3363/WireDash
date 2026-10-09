@@ -1,0 +1,16 @@
+[Unit]
+Description=WGDashboard HTTP watchdog (gunicorn only, VPN-safe)
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/wgd-watchdog.sh
+EnvironmentFile=-/etc/wgd-watchdog.env
+Restart=always
+RestartSec=5
+Nice=10
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
