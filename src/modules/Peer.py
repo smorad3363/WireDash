@@ -61,7 +61,7 @@ class Peer:
                 setattr(self, field, row[field])
         # Link writes refresh associations; expired links should not linger.
         if self.ShareLink:
-            now = datetime.now()
+            now = datetime.datetime.now()
             self.ShareLink = [link for link in self.ShareLink if link.ExpireDate > now]
 
     def metered_usage(self):

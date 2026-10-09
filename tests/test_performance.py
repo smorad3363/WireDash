@@ -31,6 +31,7 @@ class PerformanceTests(unittest.TestCase):
             self.assertIn("cached.get(row[", data)
         peer = Path("src/modules/Peer.py").read_text()
         self.assertIn("def refreshFromRow(self, row)", peer)
+        self.assertIn("datetime.datetime.now()", peer)
         self.assertNotIn("getJobs()", peer.split("def refreshFromRow(self, row)")[1].split("def metered_usage")[0])
 
     def test_ui_trims_config_and_bounds_chart(self):
