@@ -29,7 +29,7 @@ from flask.json.provider import DefaultJSONProvider
 from sqlalchemy.pool import NullPool
 from werkzeug.serving import make_server, WSGIRequestHandler
 
-from modules.ConfigurationReadModel import configuration_info_payload
+from modules.ConfigurationReadModel import configuration_info_payload, ui_configuration_page
 from modules.Peer import Peer
 from modules.WireguardConfiguration import WireguardConfiguration
 
@@ -56,6 +56,8 @@ class SyntheticLinks:
 
 
 class SyntheticInfo:
+    PeerGroups = {}
+
     def model_dump(self):
         return {"PeerGroups": {}, "OverridePeerSettings": {}}
 
@@ -152,6 +154,19 @@ def make_app(cfg, count):
             return {"status": False, "data": None, "message": "Not found"}, 404
         return {"status": True, "data": configuration_info_payload(cfg), "message": None}
 
+    @app.get("/api/ui/getWireguardConfigurationPage")
+    def get_paginated_ui():
+        if request.args.get("configurationName") != cfg.Name:
+            return {"status": False, "data": None, "message": "Not found"}, 404
+        data = ui_configuration_page(
+            cfg,
+            page=int(request.args.get("page", 1)),
+            per_page=int(request.args.get("perPage", 50)),
+            query=request.args.get("search", ""),
+            sort=request.args.get("sort", "name"),
+        )
+        return {"status": True, "data": data, "message": None}
+
     @app.get("/api/getWireguardConfigurations")
     def get_configurations():
         return {"status": True, "data": [cfg], "message": None}
@@ -200,6 +215,7 @@ def main():
     parser.add_argument("--peers", type=int, default=5000)
     parser.add_argument("--concurrency", type=int, default=50)
     parser.add_argument("--requests", type=int, default=150)
+    parser.add_argument("--mode", choices=("legacy", "ui"), default="legacy")
     parser.add_argument("--timeout", type=float, default=90)
     parser.add_argument("--json-out", default="", help="optional summary JSON path")
     args = parser.parse_args()
@@ -238,7 +254,9 @@ def main():
             start_gate.wait()
             kind = "list" if i % 10 else "configurations"
             url = endpoint + (
-                "/api/getWireguardConfigurationInfo?configurationName=wg-synthetic"
+                ("/api/ui/getWireguardConfigurationPage?configurationName=wg-synthetic&perPage=50&page=1"
+                 if args.mode == "ui" else
+                 "/api/getWireguardConfigurationInfo?configurationName=wg-synthetic")
                 if kind == "list" else "/api/getWireguardConfigurations")
             begun = time.perf_counter()
             size = 0
@@ -249,7 +267,8 @@ def main():
                     size = len(body)
                     payload = json.loads(body)
                     ok = (res.status == 200 and payload.get("status") is True
-                          and (len(payload["data"]["configurationPeers"]) == args.peers
+                          and (len(payload["data"]["configurationPeers"]) ==
+                               (50 if args.mode == "ui" and args.peers >= 50 else args.peers)
                                if kind == "list" else len(payload["data"]) == 1))
             except Exception:
                 # Avoid leaking a user's environment or URLs into benchmark logs.
@@ -262,8 +281,8 @@ def main():
             with guard:
                 samples.append(data)
 
-        print("[SETUP] fake_peers=%d concurrent_clients=%d requests=%d seed_seconds=%.3f" %
-              (args.peers, args.concurrency, args.requests, seed_s), flush=True)
+        print("[SETUP] mode=%s fake_peers=%d concurrent_clients=%d requests=%d seed_seconds=%.3f" %
+              (args.mode, args.peers, args.concurrency, args.requests, seed_s), flush=True)
         started = time.perf_counter()
         watcher = threading.Thread(target=monitor, daemon=True)
         watcher.start()
@@ -281,6 +300,7 @@ def main():
         result = summary(samples, args.peers, args.concurrency, started, proc)
         result["rss_peak_mb"] = round(max(peak_rss[0], proc.memory_info().rss / 1048576), 2)
         result["seed_seconds"] = round(seed_s, 3)
+        result["mode"] = args.mode
         result["endpoints"] = {
             kind: {
                 "requests": sum(s["kind"] == kind for s in samples),

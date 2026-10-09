@@ -10,10 +10,8 @@ import PeerDataUsageCharts from "@/components/configurationComponents/peerListCo
 import PeerSearch from "@/components/configurationComponents/peerSearch.vue";
 import Peer from "@/components/configurationComponents/peer.vue";
 import PeerListModals from "@/components/configurationComponents/peerListComponents/peerListModals.vue";
-import PeerIntersectionObserver from "@/components/configurationComponents/peerIntersectionObserver.vue";
 import ConfigurationDescription from "@/components/configurationComponents/configurationDescription.vue";
 import PeerDetailsModal from "@/components/configurationComponents/peerDetailsModal.vue";
-import {parseCidr} from "cidr-tools";
 
 // Async Components
 const PeerSearchBar = defineAsyncComponent(() => import("@/components/configurationComponents/peerSearchBar.vue"))
@@ -28,6 +26,14 @@ const wireguardConfigurationStore = WireguardConfigurationsStore()
 const route = useRoute()
 const configurationInfo = ref({})
 const configurationPeers = ref([])
+const chartPeers = ref([])
+const bulkPeers = ref([])
+const peerPage = ref(1)
+const peerPageSize = 50
+const totalPeers = ref(0)
+const filteredPeers = ref(0)
+const configurationSummary = ref({connectedPeers: 0, totalUsage: 0, totalReceive: 0, totalSent: 0})
+const pageCount = computed(() => Math.max(1, Math.ceil(filteredPeers.value / peerPageSize)))
 const configurationToggling = ref(false)
 const configurationModalSelectedPeer = ref({})
 const configurationModals = ref({
@@ -81,33 +87,35 @@ const configurationModals = ref({
 	}
 })
 const peerSearchBar = ref(false)
-// Fetch Peer =====================================
+// Fetch ONLY the requested UI page. Existing bot APIs remain unchanged.
 let peerListLoading = false
 let peerListRefreshQueued = false
 const fetchPeerList = async () => {
 	if (peerListLoading) {
-		// A manual mutation still deserves a fresh response after a poll.
 		peerListRefreshQueued = true
 		return
 	}
 	peerListLoading = true
 	try {
-	await fetchGet("/api/getWireguardConfigurationInfo", {
-		configurationName: route.params.id
-	}, (res) => {
-		if (res.status){
-			configurationInfo.value = res.data.configurationInfo;
-			configurationPeers.value = res.data.configurationPeers;
-			
-			configurationPeers.value.forEach(p => {
-				p.restricted = false
-			})
-			res.data.configurationRestrictedPeers.forEach(x => {
-				x.restricted = true;
-				configurationPeers.value.push(x)
-			})
-		}
-	})
+		await fetchGet("/api/ui/getWireguardConfigurationPage", {
+			configurationName: route.params.id,
+			page: peerPage.value,
+			perPage: peerPageSize,
+			search: wireguardConfigurationStore.searchString || "",
+			sort: dashboardStore.Configuration.Server.dashboard_sort || "name",
+			hiddenTags: wireguardConfigurationStore.Filter.HiddenTags.join(","),
+			showAllWhenHidden: wireguardConfigurationStore.Filter.ShowAllPeersWhenHiddenTags
+		}, (res) => {
+			if (res.status) {
+				configurationInfo.value = res.data.configurationInfo
+				configurationPeers.value = res.data.configurationPeers
+				chartPeers.value = res.data.chartPeers
+				configurationSummary.value = res.data.summary
+				totalPeers.value = res.data.totalPeers
+				filteredPeers.value = res.data.filteredPeers
+				peerPage.value = res.data.page
+			}
+		})
 	} finally {
 		peerListLoading = false
 		if (peerListRefreshQueued) {
@@ -160,99 +168,36 @@ const toggleConfiguration = async () => {
 	})
 }
 
-// Configuration Summary =====================================
-const configurationSummary = computed(() => {
-	return {
-		connectedPeers: configurationPeers.value.filter(x => x.status === "running").length,
-		totalUsage: configurationPeers.value.length > 0 ?
-			configurationPeers.value
-				.map(x => x.metered_data).reduce((a, b) => a + b, 0).toFixed(4) : 0,
-		totalReceive: configurationPeers.value.length > 0 ?
-			configurationPeers.value
-				.map(x => x.metered_receive).reduce((a, b) => a + b, 0).toFixed(4) : 0,
-		totalSent: configurationPeers.value.length > 0 ?
-			configurationPeers.value
-				.map(x => x.metered_sent).reduce((a, b) => a + b, 0).toFixed(4) : 0
-	}
-})
-
-const showPeersCount = ref(10)
-const showPeersThreshold = 20;
-const hiddenPeers = computed(() => {
-	return wireguardConfigurationStore.Filter.HiddenTags.map(tag => {
-		return configurationInfo.value.Info.PeerGroups[tag].Peers
-	}).flat()
-})
-const taggedPeers = computed(() => {
-	return Object.values(configurationInfo.value.Info.PeerGroups).map(x => x.Peers).flat()
-})
-
-const firstAllowedIPCount = (allowed_ip) => {
-	try{
-		return parseCidr(allowed_ip.replace(" ", "").split(",")[0]).start
-	}catch (e){
-		return 0
-	}
+// Server-side search, sort and paging; full lists are loaded only for bulk UI.
+const searchPeers = computed(() => configurationPeers.value)
+const gotoPeerPage = async (page) => {
+	if (page < 1 || page > pageCount.value || page === peerPage.value) return
+	peerPage.value = page
+	await fetchPeerList()
 }
-
-const searchPeers = computed(() => {
-	const result = wireguardConfigurationStore.searchString ?
-		configurationPeers.value.filter(x => {
-			return (x.name.includes(wireguardConfigurationStore.searchString) ||
-				x.id.includes(wireguardConfigurationStore.searchString) ||
-				x.allowed_ip.includes(wireguardConfigurationStore.searchString))
-				&& !hiddenPeers.value.includes(x.id)
-				&& (
-					wireguardConfigurationStore.Filter.ShowAllPeersWhenHiddenTags || (!wireguardConfigurationStore.Filter.ShowAllPeersWhenHiddenTags && taggedPeers.value.includes(x.id))
-				)
-		}) : configurationPeers.value.filter(x => !hiddenPeers.value.includes(x.id) && (
-			wireguardConfigurationStore.Filter.ShowAllPeersWhenHiddenTags || (!wireguardConfigurationStore.Filter.ShowAllPeersWhenHiddenTags && taggedPeers.value.includes(x.id))
-		));
-
-	if (dashboardStore.Configuration.Server.dashboard_sort === "restricted"){
-		return result.sort((a, b) => {
-			if ( a[dashboardStore.Configuration.Server.dashboard_sort]
-				< b[dashboardStore.Configuration.Server.dashboard_sort] ){
-				return 1;
-			}
-			if ( a[dashboardStore.Configuration.Server.dashboard_sort]
-				> b[dashboardStore.Configuration.Server.dashboard_sort]){
-				return -1;
-			}
-			return 0;
-		}).slice(0, showPeersCount.value);
-	}
-
-	let re = []
-
-	if (dashboardStore.Configuration.Server.dashboard_sort === 'allowed_ip'){
-		re = result.sort((a, b) => {
-			if ( firstAllowedIPCount(a[dashboardStore.Configuration.Server.dashboard_sort])
-				< firstAllowedIPCount(b[dashboardStore.Configuration.Server.dashboard_sort]) ){
-				return -1;
-			}
-			if ( firstAllowedIPCount(a[dashboardStore.Configuration.Server.dashboard_sort])
-				> firstAllowedIPCount(b[dashboardStore.Configuration.Server.dashboard_sort])){
-				return 1;
-			}
-			return 0;
-		}).slice(0, showPeersCount.value)
-	}else{
-		re = result.sort((a, b) => {
-			if ( a[dashboardStore.Configuration.Server.dashboard_sort]
-				< b[dashboardStore.Configuration.Server.dashboard_sort] ){
-				return -1;
-			}
-			if ( a[dashboardStore.Configuration.Server.dashboard_sort]
-				> b[dashboardStore.Configuration.Server.dashboard_sort]){
-				return 1;
-			}
-			return 0;
-		}).slice(0, showPeersCount.value)
-	}
-
-
-	return re
+const openBulkModal = async (modal) => {
+	let loaded = false
+	await fetchGet("/api/getWireguardConfigurationInfo", {
+		configurationName: route.params.id
+	}, (res) => {
+		if (res.status) {
+			bulkPeers.value = [
+				...res.data.configurationPeers,
+				...res.data.configurationRestrictedPeers.map(p => ({...p, restricted: true}))
+			]
+			loaded = true
+		}
+	})
+	if (loaded) configurationModals.value[modal].modalOpen = true
+}
+watch(() => JSON.stringify([
+	wireguardConfigurationStore.searchString || "",
+	dashboardStore.Configuration.Server.dashboard_sort,
+	wireguardConfigurationStore.Filter.HiddenTags,
+	wireguardConfigurationStore.Filter.ShowAllPeersWhenHiddenTags,
+]), () => {
+	peerPage.value = 1
+	fetchPeerList()
 })
 
 watch(() => route.query.id, (newValue) => {
@@ -363,7 +308,7 @@ watch(() => route.query.id, (newValue) => {
 							<LocaleText t="Connected Peers"></LocaleText>
 						</small></p>
 						<strong class="h4">
-							{{configurationSummary.connectedPeers}} / {{configurationPeers.length}}
+							{{configurationSummary.connectedPeers}} / {{totalPeers}}
 						</strong>
 					</div>
 					<i class="bi bi-ethernet ms-auto h2 text-muted"></i>
@@ -411,18 +356,19 @@ watch(() => route.query.id, (newValue) => {
 		</div>
 	</div>
 	<PeerDataUsageCharts
-		:configurationPeers="configurationPeers"
+		:configurationPeers="chartPeers"
 		:configurationInfo="configurationInfo"
 	></PeerDataUsageCharts>
+	<small class="text-muted">Usage chart: top 30 peers by total metered traffic; upload and download remain separate.</small>
 	<hr>
 	<div style="margin-bottom: 10rem">
 		<PeerSearch
-			v-if="configurationPeers.length > 0"
+			v-if="totalPeers > 0"
 			@search="peerSearchBar = !peerSearchBar"
-			@jobsAll="configurationModals.peerScheduleJobsAll.modalOpen = true"
+			@jobsAll="openBulkModal('peerScheduleJobsAll')"
 			@jobLogs="configurationModals.peerScheduleJobsLogs.modalOpen = true"
 			@editConfiguration="configurationModals.editConfiguration.modalOpen = true"
-			@selectPeers="configurationModals.selectPeers.modalOpen = true"
+			@selectPeers="openBulkModal('selectPeers')"
 			@backupRestore="configurationModals.backupRestore.modalOpen = true"
 			@deleteConfiguration="configurationModals.deleteConfiguration.modalOpen = true"
 			:configuration="configurationInfo">
@@ -475,7 +421,7 @@ watch(() => route.query.id, (newValue) => {
 			@refresh="fetchPeerList()"
 			@allLogs="configurationModals.peerScheduleJobsLogs.modalOpen = true"
 			@close="configurationModals.peerScheduleJobsAll.modalOpen = false"
-			:configurationPeers="configurationPeers"
+			:configurationPeers="bulkPeers"
 		>
 		</PeerJobsAllModal>
 		<PeerJobsLogsModal
@@ -498,21 +444,25 @@ watch(() => route.query.id, (newValue) => {
 		<SelectPeersModal
 			@refresh="fetchPeerList()"
 			v-if="configurationModals.selectPeers.modalOpen"
-			:configurationPeers="configurationPeers"
+			:configurationPeers="bulkPeers"
 			@close="configurationModals.selectPeers.modalOpen = false"
 		></SelectPeersModal>
 		<PeerDetailsModal
 			key="PeerDetailsModal"
 			v-if="configurationModals.peerDetails.modalOpen"
-			:selectedPeer="searchPeers.find(x => x.id === configurationModalSelectedPeer.id)"
+			:selectedPeer="configurationPeers.find(x => x.id === configurationModalSelectedPeer.id) || configurationModalSelectedPeer"
 			@close="configurationModals.peerDetails.modalOpen = false"
 		>
 		</PeerDetailsModal>
 	</TransitionGroup>
-	<PeerIntersectionObserver
-		:showPeersCount="showPeersCount"
-		:peerListLength="searchPeers.length"
-		@loadMore="showPeersCount += showPeersThreshold"></PeerIntersectionObserver>
+	<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mt-3 mb-5" v-if="filteredPeers > 0">
+		<small class="text-muted">Showing {{(peerPage - 1) * peerPageSize + 1}}–{{Math.min(peerPage * peerPageSize, filteredPeers)}} of {{filteredPeers}} matching peers</small>
+		<div class="btn-group" role="group" aria-label="Peer pages">
+			<button class="btn btn-sm btn-outline-secondary" :disabled="peerPage <= 1" @click="gotoPeerPage(peerPage - 1)">Previous</button>
+			<button class="btn btn-sm btn-outline-secondary" disabled>Page {{peerPage}} / {{pageCount}}</button>
+			<button class="btn btn-sm btn-outline-secondary" :disabled="peerPage >= pageCount" @click="gotoPeerPage(peerPage + 1)">Next</button>
+		</div>
+	</div>
 </div>
 </template>
 
