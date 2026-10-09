@@ -805,7 +805,11 @@ class WireguardConfiguration:
                         if (total_sent * 0.999 ) <= cur_total_sent and (total_receive * 0.999) <= cur_total_receive: # An accuracy of 1K ppm is sufficient
                             total_sent = cur_total_sent
                             total_receive = cur_total_receive
+                            billed_cumulative_receive = cur_i['cumu_receive']
+                            billed_cumulative_sent = cur_i['cumu_sent']
                         else:
+                            billed_cumulative_receive = cumulative_receive
+                            billed_cumulative_sent = cumulative_sent
                             conn.execute(
                                 self.peersTable.update().values({
                                     "cumu_receive": cumulative_receive,
@@ -830,6 +834,14 @@ class WireguardConfiguration:
                                         self.peersTable.c.id == data_usage[i][0]
                                     )
                                 )
+                            # The transfer DB is authoritative. Keep the cached Peer
+                            # model aligned so weighted API/UI values advance live.
+                            p.total_receive = total_receive
+                            p.total_sent = total_sent
+                            p.total_data = total_receive + total_sent
+                            p.cumu_receive = billed_cumulative_receive
+                            p.cumu_sent = billed_cumulative_sent
+                            p.cumu_data = billed_cumulative_receive + billed_cumulative_sent
 
             
 

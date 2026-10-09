@@ -69,6 +69,12 @@ class QuotaTest(unittest.TestCase):
         self.assertIn('measured["receive"]', client)
         self.assertIn('measured["sent"]', client)
         self.assertNotIn("'traffic_factor'", client)
+        transfer = pathlib.Path("src/modules/WireguardConfiguration.py").read_text()
+        self.assertIn("p.total_receive = total_receive", transfer)
+        self.assertIn("p.total_sent = total_sent", transfer)
+        self.assertIn("p.cumu_receive = billed_cumulative_receive", transfer)
+        self.assertIn("p.cumu_sent = billed_cumulative_sent", transfer)
+
 
 
 if __name__ == "__main__":
