@@ -82,7 +82,16 @@ const configurationModals = ref({
 })
 const peerSearchBar = ref(false)
 // Fetch Peer =====================================
+let peerListLoading = false
+let peerListRefreshQueued = false
 const fetchPeerList = async () => {
+	if (peerListLoading) {
+		// A manual mutation still deserves a fresh response after a poll.
+		peerListRefreshQueued = true
+		return
+	}
+	peerListLoading = true
+	try {
 	await fetchGet("/api/getWireguardConfigurationInfo", {
 		configurationName: route.params.id
 	}, (res) => {
@@ -99,6 +108,13 @@ const fetchPeerList = async () => {
 			})
 		}
 	})
+	} finally {
+		peerListLoading = false
+		if (peerListRefreshQueued) {
+			peerListRefreshQueued = false
+			await fetchPeerList()
+		}
+	}
 }
 await fetchPeerList()
 
@@ -106,9 +122,11 @@ await fetchPeerList()
 const fetchPeerListInterval = ref(undefined)
 const setFetchPeerListInterval = () => {
 	clearInterval(fetchPeerListInterval.value)
-	fetchPeerListInterval.value = setInterval(async () => {
-		await fetchPeerList()
-	},  parseInt(dashboardStore.Configuration.Server.dashboard_refresh_interval))
+	const refreshMs = Math.max(10000, Number(dashboardStore.Configuration.Server.dashboard_refresh_interval) || 60000)
+	fetchPeerListInterval.value = setInterval(() => {
+		// Avoid wasting JSON serialization and chart work in background tabs.
+		if (!document.hidden) fetchPeerList()
+	}, refreshMs)
 }
 setFetchPeerListInterval()
 onBeforeUnmount(() => {

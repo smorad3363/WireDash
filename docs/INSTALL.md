@@ -26,6 +26,12 @@ A regular invocation automatically updates WireDash-managed containers (same com
 
 Ubuntu 22.04 and Ubuntu 24.04 are supported/tested hosts; WireDash runs in Docker but the bootstrap executes on the host and still needs HTTPS network access. Some VPS networks block `api.github.com:443`. The canonical command no longer calls that API. It needs `raw.githubusercontent.com:443` for version resolution and assets, and `ghcr.io:443` for the preferred image. If the registry is unavailable, local Docker building additionally needs `codeload.github.com:443` and build dependency registries/GitHub. Check host egress with `curl -I --connect-timeout 8 https://raw.githubusercontent.com/` and `curl -I --connect-timeout 8 https://ghcr.io/v2/` (the latter may respond with HTTP 401, showing TLS connectivity). Missing network access cannot be corrected by switching to Ubuntu 24.04.
 
+## Performance and polling
+
+The configuration page no longer spends an unconditional second in the real-time traffic API: it computes MB/s from monotonic-time snapshots collected across refresh requests. First sample returns zero; later samples contain the elapsed-time average. Both WireGuard and AmneziaWG use this method. The background refresh still reads database counter rows, but reuses unchanged Peer objects instead of rebuilding peer-associated jobs/share links every 10 seconds. The peer-list API returns per-peer scalar data without repeatedly embedding the entire parent configuration object. Inactive browser tabs pause their peer-list and throughput polling; chart sampling is capped at 120 points and chart animations are disabled. No existing keys, WireGuard interface files, quota accounting counters, database schemas or Docker mounts are modified.
+
+These are code-level optimizations; no claim of a measured speed-up on the production VPS is made until end-to-end timings are captured. The immutable Docker image build and HTTP smoke gate remain mandatory.
+
 ## Backup
 
 Run `sudo wireback` then choose option 1 to set Telegram credentials interactively.

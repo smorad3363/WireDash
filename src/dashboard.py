@@ -1082,8 +1082,17 @@ def API_getConfigurationInfo():
         return ResponseObject(False, "Please provide configuration name")
     return ResponseObject(data={
         "configurationInfo": WireguardConfigurations[configurationName],
-        "configurationPeers": WireguardConfigurations[configurationName].getPeersList(),
-        "configurationRestrictedPeers": WireguardConfigurations[configurationName].getRestrictedPeersList()
+        # Each Peer holds a parent Configuration object. Serializing that
+        # redundant object per peer inflates responses and leaks server metadata.
+        # The parent configuration is already returned once in configurationInfo.
+        "configurationPeers": [
+            {k: v for k, v in peer.toJson().items() if k != "configuration"}
+            for peer in WireguardConfigurations[configurationName].getPeersList()
+        ],
+        "configurationRestrictedPeers": [
+            {k: v for k, v in peer.toJson().items() if k != "configuration"}
+            for peer in WireguardConfigurations[configurationName].getRestrictedPeersList()
+        ]
     })
 
 @app.get(f'{APP_PREFIX}/api/getPeerHistoricalEndpoints')
