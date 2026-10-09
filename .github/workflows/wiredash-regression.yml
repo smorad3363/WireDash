@@ -1,0 +1,29 @@
+name: WireDash isolated regression checks
+
+on:
+  pull_request:
+  push:
+    branches:
+      - 'work/**'
+
+permissions:
+  contents: read
+
+jobs:
+  sqlite-policy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Python syntax and disposable SQLite WAL policy
+        run: |
+          python -m compileall -q src/modules/DatabaseConnection.py tests/test_database_policy.py
+          python tests/test_database_policy.py
+      - name: Docker entrypoint syntax only
+        run: bash -n docker/entrypoint.sh
+
+# This lightweight test stubs sqlalchemy_utils; it does NOT replace integration,
+# concurrency, WireGuard or full backup/restore tests before production deploy.

@@ -1,4 +1,7 @@
 *.tar
+*.tar.gz
+*.tgz
+*.zip
 .vscode
 .DS_Store
 .idea
@@ -6,11 +9,16 @@ src/db
 __pycache__
 src/test.py
 *.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
 src/wg-dashboard.ini
 src/static/pic.xd
 *.conf
 private_key.txt
 public_key.txt
+*.key
 *venv*
 log/**
 release/*
@@ -22,6 +30,13 @@ src/static/app/proxy.js
 .secrets
 *.ini
 *.pid
+
+# Local credentials and real VPN backups must never be committed to this public repo.
+.env
+.env.*
+!.env.example
+*.backup
+*.backup.*
 
 # Logs
 logs

@@ -11,7 +11,9 @@ def post_worker_init(worker):
 
 worker_class = 'gthread'
 workers = 1
-threads = 2
+# Tested temporary mitigation for concurrent peer-save errors; complete API-level
+# mutation locking and configurable worker settings are tracked in the roadmap.
+threads = 1
 bind = f"{app_host}:{app_port}"
 daemon = True
 pidfile = './gunicorn.pid'
