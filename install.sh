@@ -83,8 +83,10 @@ if ((UNINSTALL)); then
 fi
 step 1 'host prerequisites'
 if [[ -f /etc/os-release ]]; then
-  . /etc/os-release
-  if [[ "${ID:-}" != ubuntu || " ${VERSION_ID:-}" != ' 22.04' && " ${VERSION_ID:-}" != ' 24.04' ]]; then
+  ID=$( . /etc/os-release; printf '%s' "${ID:-}" )
+  VERSION_ID=$( . /etc/os-release; printf '%s' "${VERSION_ID:-}" )
+  PRETTY_NAME=$( . /etc/os-release; printf '%s' "${PRETTY_NAME:-}" )
+  if [[ "${ID:-}" != ubuntu || ( "${VERSION_ID:-}" != 22.04 && "${VERSION_ID:-}" != 24.04 ) ]]; then
     log "WARNING: tested on Ubuntu 22.04/24.04; found ${PRETTY_NAME:-unknown}"
   fi
 fi
@@ -163,6 +165,20 @@ if ((MIGRATE)); then
       die 'managed compose path is occupied by a different deployment; migrate manually'
   fi
   log "Migrating existing compose: $COMPOSE"
+  if (( PORT_GIVEN == 0 )); then
+    # On migrations, a different host port may already be published.
+    PORT=$(docker inspect "$CONTAINER" | python3 -c '
+import json,sys
+ports=json.load(sys.stdin)[0].get("NetworkSettings",{}).get("Ports") or {}
+published={binding["HostPort"]
+    for container_port,bindings in ports.items()
+    if container_port.endswith("/tcp") and bindings
+    for binding in bindings if binding.get("HostPort")}
+if len(published)!=1: raise SystemExit("expected exactly one published TCP panel port")
+print(next(iter(published)))
+')
+    [[ "$PORT" =~ ^[0-9]+$ ]] && (( PORT >= 1 && PORT <= 65535 )) || die 'invalid published panel port'
+  fi
 elif exists && ((UPGRADE)); then
   [[ -f "$COMPOSE" ]] || die 'upgrade requires existing managed compose under /opt/wgdashboard'
   [[ -f "$DEST/.env" ]] || die 'upgrade requires existing managed .env'

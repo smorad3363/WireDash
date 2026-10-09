@@ -200,7 +200,11 @@ PYEOF
 )"
 
 if [[ "$PATCH_RESULT" != "OK" ]]; then
-  die "Patch substitution failed (result: $PATCH_RESULT). Restoring backup..."
+  if docker exec "$CONTAINER" cp "${TARGET_FILE}${BACKUP_SUFFIX}" "$TARGET_FILE"; then
+    die "Patch substitution failed (result: $PATCH_RESULT); original file restored."
+  else
+    die "Patch substitution failed (result: $PATCH_RESULT); automatic restore FAILED."
+  fi
 fi
 log "Patch written."
 

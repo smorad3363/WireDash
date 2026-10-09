@@ -239,8 +239,8 @@ backup() {
   tar -C "$DATA" --exclude='./db' -cf - . | tar -C "$stage/data" -xf -
   cp -a "$WG/." "$stage/etc/wireguard/"
   cp -a "$AWG/." "$stage/etc/amnezia/amneziawg/"
-  cp -a "$COMPOSE" "$stage/compose.yaml"
-  [[ ! -f /opt/wgdashboard/.env ]] || cp -a /opt/wgdashboard/.env "$stage/.env"
+  cp -L --preserve=mode,ownership,timestamps "$COMPOSE" "$stage/compose.yaml"
+  [[ ! -f /opt/wgdashboard/.env ]] || cp -L --preserve=mode,ownership,timestamps /opt/wgdashboard/.env "$stage/.env"
   online_sqlite "$stage/data/db"
   after=$(fingerprint)
   [[ "$before" == "$after" ]] || fail 'Configuration changed during capture. No backup sent; retry manually or on the next timer.'
@@ -400,8 +400,8 @@ restore() {
   cp -a "$DATA/." "$tmp/previous/data/"
   cp -a "$WG/." "$tmp/previous/etc/wireguard/"
   cp -a "$AWG/." "$tmp/previous/etc/amnezia/amneziawg/"
-  cp -a "$COMPOSE" "$tmp/previous/compose.yaml"
-  [[ ! -e /opt/wgdashboard/.env ]] || cp -a /opt/wgdashboard/.env "$tmp/previous/.env"
+  cp -L --preserve=mode,ownership,timestamps "$COMPOSE" "$tmp/previous/compose.yaml"
+  [[ ! -e /opt/wgdashboard/.env ]] || cp -L --preserve=mode,ownership,timestamps /opt/wgdashboard/.env "$tmp/previous/.env"
   pre="$OUT/pre-restore-$(date -u +%Y%m%d-%H%M%S).tar.gz"
   tar -C "$tmp/previous" -czf "$pre" .
   tar -tzf "$pre" >/dev/null
