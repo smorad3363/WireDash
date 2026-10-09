@@ -239,7 +239,13 @@ if ((healthy==0)); then
   fi
   die 'panel HTTP handshake failed after 180s; original compose restored when available'
 fi
-docker exec -i "$CONTAINER" python3 - /opt/wgdashboard/src/modules/PeerShareLinks.py < "$STAGE/check_patch.py" || die 'post-install source patch assertion failed'
+if ! docker exec -i "$CONTAINER" python3 - /opt/wgdashboard/src/modules/PeerShareLinks.py < "$STAGE/check_patch.py"; then
+  if [[ -n "$old_compose" ]]; then
+    cp -a "$old_compose" "$COMPOSE"
+    docker compose -f "$COMPOSE" up -d --no-deps wgdashboard || :
+  fi
+  die 'post-install patch assertion failed; previous image restored if applicable'
+fi
 step 7 'install backup integration'
 if ((SKIP_BACKUP==0)); then
   bash "$STAGE/wgdashbackup.sh" --install

@@ -45,24 +45,28 @@ url = "https://api.telegram.org/bot${TOKEN}/sendMessage"
 EOF
   then
     printf '%s\n' "$now" > "$STATE_DIR/last-alert"
-    log 'Telegram alert delivered'
+    if grep -Eq '"ok"[[:space:]]*:[[:space:]]*true' "$resp"; then
+      log 'Telegram alert delivered'
+    else
+      log 'Telegram returned an API error'
+    fi
   else
     log 'Telegram alert failed'
   fi
   rm -f "$resp"
 }
-# Fixed 30-minute slots cap recovery runs across watchdog restarts.
+# Rolling 30-minute recovery cap, persisted across watchdog restarts.
 cap_allows() {
-  local slot count now_slot
-  now_slot=$(( $(date +%s) / 1800 ))
-  slot=0; count=0
-  if [[ -s "$STATE_DIR/recoveries" ]]; then
-    read -r slot count < "$STATE_DIR/recoveries" || :
-  fi
-  [[ "$slot" =~ ^[0-9]+$ && "$count" =~ ^[0-9]+$ ]] || { slot=0; count=0; }
-  [[ "$slot" == "$now_slot" ]] || count=0
-  if (( count >= 3 )); then return 1; fi
-  printf '%s %s\n' "$now_slot" "$((count+1))" > "$STATE_DIR/recoveries"
+  local now t
+  local -a prior=() retained=()
+  now=$(date +%s)
+  if [[ -s "$STATE_DIR/recoveries" ]]; then read -r -a prior < "$STATE_DIR/recoveries" || :; fi
+  for t in "${prior[@]}"; do
+    if [[ "$t" =~ ^[0-9]+$ ]] && (( now >= t && now-t < 1800 )); then retained+=("$t"); fi
+  done
+  if (( ${#retained[@]} >= 3 )); then return 1; fi
+  retained+=("$now")
+  printf '%s\n' "${retained[*]}" > "$STATE_DIR/recoveries"
   return 0
 }
 recover() {
