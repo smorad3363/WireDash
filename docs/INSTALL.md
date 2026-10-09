@@ -26,6 +26,19 @@ A regular invocation automatically updates WireDash-managed containers (same com
 
 Ubuntu 22.04 and Ubuntu 24.04 are supported/tested hosts; WireDash runs in Docker but the bootstrap executes on the host and still needs HTTPS network access. Some VPS networks block `api.github.com:443`. The canonical command no longer calls that API. It needs `raw.githubusercontent.com:443` for version resolution and assets, and `ghcr.io:443` for the preferred image. If the registry is unavailable, local Docker building additionally needs `codeload.github.com:443` and build dependency registries/GitHub. Check host egress with `curl -I --connect-timeout 8 https://raw.githubusercontent.com/` and `curl -I --connect-timeout 8 https://ghcr.io/v2/` (the latter may respond with HTTP 401, showing TLS connectivity). Missing network access cannot be corrected by switching to Ubuntu 24.04.
 
+## Synthetic 5000-peer concurrent API load test
+
+After the Docker image passes its normal tests, CI runs an **isolated** performance rehearsal with 5000 non-authenticating fake peer records in a temporary SQLite DB and 50 concurrent loopback HTTP clients (120 requests). The load-test route uses the **same production configuration-info response builder**, real Peer and WireguardConfiguration model serialization, and the real DB peer loader. The test image container has no host/network access, no VPN capabilities and no production mounts. It reports setup time, completed/error requests, p50/p95/p99/max latency, request throughput, CPU usage, and RSS memory in live stdout (no per-user secrets or policy factors). This is a regression/performance characterization on a disposable GitHub runner, **not** an actual authenticated production HTTP benchmark, peer handshake test, or a measurement of VPS performance.
+
+To run the same test on the VPS without writing a single real user, fetch and run the read-only wrapper:
+
+```bash
+curl -fsSLo /tmp/wiredash-benchmark.sh https://raw.githubusercontent.com/smorad3363/WireDash/main/tests/run_synthetic_benchmark.sh
+bash /tmp/wiredash-benchmark.sh 5000 50 120
+```
+
+The wrapper only inspects the currently installed immutable image tag, fetches the exact matching test script by SHA, and runs a separate resource-limited container with `--network none`, `--read-only`, temporary `/tmp` and **no production volumes** or external network. It prints `[LIVE]` CPU, RSS, completed/failed requests updates and a final `[SUMMARY]` with p50/p95/p99 latency, rate, errors, throughput and observed memory high-water mark; no peer keys or personal data are logged. Default: 5000 fake peers, 50 clients and 120 total requests. Arguments may change all three; test is capped to one CPU and 768 MiB on VPS. It is a synthetic API read/serialization test, not a production authenticated panel browser or VPN throughput test.
+
 ## Performance and polling
 
 The configuration page no longer spends an unconditional second in the real-time traffic API: it computes MB/s from monotonic-time snapshots collected across refresh requests. First sample returns zero; later samples contain the elapsed-time average. Both WireGuard and AmneziaWG use this method. The background refresh still reads database counter rows, but reuses unchanged Peer objects instead of rebuilding peer-associated jobs/share links every 10 seconds. The peer-list API returns per-peer scalar data without repeatedly embedding the entire parent configuration object. Inactive browser tabs pause their peer-list and throughput polling; chart sampling is capped at 120 points and chart animations are disabled. No existing keys, WireGuard interface files, quota accounting counters, database schemas or Docker mounts are modified.

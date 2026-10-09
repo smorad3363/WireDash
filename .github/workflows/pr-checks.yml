@@ -14,7 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Bash syntax
-        run: bash -n install.sh deploy/wgdashbackup.sh deploy/wgd-watchdog.sh deploy/legacy/fix-wgdashboard-hang.sh tests/smoke.sh
+        run: bash -n install.sh deploy/wgdashbackup.sh deploy/wgd-watchdog.sh deploy/legacy/fix-wgdashboard-hang.sh tests/smoke.sh tests/run_synthetic_benchmark.sh
       - name: Python AST test
         run: python3 tests/check_patch.py
       - name: Peer traffic quota tests
@@ -22,7 +22,7 @@ jobs:
       - name: Polling and peer reuse regression tests
         run: python3 tests/test_performance.py
       - name: ShellCheck
-        run: shellcheck -S warning install.sh deploy/wgdashbackup.sh deploy/wgd-watchdog.sh tests/smoke.sh
+        run: shellcheck -S warning install.sh deploy/wgdashbackup.sh deploy/wgd-watchdog.sh tests/smoke.sh tests/run_synthetic_benchmark.sh
       - name: Compose parse
         run: docker compose -f deploy/compose.yaml config -q
       - name: Installer dry run (read-only)
@@ -50,6 +50,17 @@ jobs:
             grep -Rq "Download:" /opt/wgdashboard/src/static/dist/WGDashboardClient/assets
             grep -Rq "Upload:" /opt/wgdashboard/src/static/dist/WGDashboardClient/assets
           '
+      - name: Synthetic 5000 peers under 50 concurrent API clients
+        run: |
+          # Test-only disposable container. Never attach production volumes or
+          # network, expose listening ports, or touch real WireGuard interfaces.
+          docker run --rm --network none --read-only \
+            --tmpfs /tmp:rw,nosuid,nodev,size=192m \
+            -v "$PWD/tests:/tests:ro" \
+            -e PYTHONPATH=/opt/wgdashboard/src \
+            -w /opt/wgdashboard/src \
+            --entrypoint /opt/wgdashboard/src/venv/bin/python3 wiredash:pr-check \
+            /tests/benchmark_synthetic_api.py --peers 5000 --concurrency 50 --requests 120
       - name: Live HTTP smoke on disposable GitHub runner
         run: |
           set -Eeuo pipefail
