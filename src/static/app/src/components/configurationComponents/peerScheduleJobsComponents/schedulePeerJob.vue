@@ -98,6 +98,19 @@ export default {
 			}
 			this.$emit('delete')
 		},
+		quotaValue(){
+			try {
+				const p = JSON.parse(this.job.Value);
+				return {limit_gb: p.limit_gb ?? "", weight: p.weight ?? "1"};
+			} catch {
+				return {limit_gb: "", weight: "1"};
+			}
+		},
+		updateQuota(key, value){
+			const p = this.quotaValue();
+			p[key] = value;
+			this.job.Value = JSON.stringify(p);
+		},
 		parseTime(modelData){
 			if(modelData){
 				this.job.Value = dayjs(modelData).format("YYYY-MM-DD HH:mm:ss");
@@ -141,6 +154,16 @@ export default {
 					@update="(value) => this.job.Operator = value"
 				></ScheduleDropdown>
 
+				<template v-if="this.job.Field === 'quota_total_data'">
+					<label class="small">Quota (GB)</label>
+					<input type="number" min="0.01" step="0.01" class="form-control form-control-sm"
+						:disabled="!edit" :value="quotaValue().limit_gb"
+						@input="updateQuota('limit_gb', $event.target.value)">
+					<label class="small">Weight</label>
+					<input type="number" min="0.1" max="10" step="0.1" class="form-control form-control-sm"
+						:disabled="!edit" :value="quotaValue().weight"
+						@input="updateQuota('weight', $event.target.value)">
+				</template>
 				<VueDatePicker
 					:is24="true"
 					:min-date="new Date()"
@@ -150,7 +173,7 @@ export default {
 					preview-format="yyyy-MM-dd HH:mm:ss"
 					:clearable="false"
 					:disabled="!edit"
-					v-if="this.job.Field === 'date'"
+					v-else-if="this.job.Field === 'date'"
 					:dark="this.store.Configuration.Server.dashboard_theme === 'dark'"
 				/>
 				

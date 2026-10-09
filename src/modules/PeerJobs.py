@@ -2,6 +2,9 @@
 Peer Jobs
 """
 import sqlalchemy
+import uuid
+from datetime import timedelta
+from .PeerLimits import quota_payload, quota_reached, parse_quota_payload
 
 from .DatabaseConnection import ConnectionString
 from .PeerJob import PeerJob
@@ -70,6 +73,10 @@ class PeerJobs:
     def saveJob(self, Job: PeerJob) -> tuple[bool, list] | tuple[bool, str]:
         import traceback
         try:
+            if Job.Field == "quota_total_data":
+                parse_quota_payload(Job.Value)
+                if Job.Action != "restrict":
+                    return False, "Quota rules may only restrict access"
             with self.engine.begin() as conn:
                 currentJob = self.searchJobById(Job.JobID)
                 if len(currentJob) == 0:
@@ -88,7 +95,10 @@ class PeerJobs:
                             }
                         )
                     )
-                    self.JobLogger.log(Job.JobID, Message=f"Job is created if {Job.Field} {Job.Operator} {Job.Value} then {Job.Action}")
+                    if Job.Field == "quota_total_data":
+                        self.JobLogger.log(Job.JobID, Message="Traffic quota rule created")
+                    else:
+                        self.JobLogger.log(Job.JobID, Message=f"Job is created if {Job.Field} {Job.Operator} {Job.Value} then {Job.Action}")
                 else:
                     conn.execute(
                         self.peerJobTable.update().values({
@@ -98,7 +108,10 @@ class PeerJobs:
                             "Action": Job.Action
                         }).where(self.peerJobTable.columns.JobID == Job.JobID)
                     )
-                    self.JobLogger.log(Job.JobID, Message=f"Job is updated from if {currentJob[0].Field} {currentJob[0].Operator} {currentJob[0].Value} then {currentJob[0].Action}; to if {Job.Field} {Job.Operator} {Job.Value} then {Job.Action}")
+                    if Job.Field == "quota_total_data" or currentJob[0].Field == "quota_total_data":
+                        self.JobLogger.log(Job.JobID, Message="Traffic quota rule updated")
+                    else:
+                        self.JobLogger.log(Job.JobID, Message=f"Job is updated from if {currentJob[0].Field} {currentJob[0].Operator} {currentJob[0].Value} then {currentJob[0].Action}; to if {Job.Field} {Job.Operator} {Job.Value} then {Job.Action}")
             self.__getJobs()
             self.WireguardConfigurations.get(Job.Configuration).searchPeer(Job.Peer)[1].getJobs()
             return True, list(
@@ -140,6 +153,41 @@ class PeerJobs:
         except Exception as e:
             return False, str(e)
     
+    def provision_creation_limits(self, configuration, peer_ids, days, quota_gb, traffic_factor):
+        """Create all policy jobs atomically; never record metering weights in logs."""
+        if not days and not quota_gb:
+            return True, None
+        if not peer_ids:
+            return False, "No created peers"
+        now = datetime.now()
+        records = []
+        for peer in peer_ids:
+            for field, value in (
+                ("date", (now + timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S") if days else None),
+                ("quota_total_data", quota_payload(quota_gb, traffic_factor) if quota_gb else None),
+            ):
+                if value is not None:
+                    records.append({
+                        "JobID": str(uuid.uuid4()), "Configuration": configuration,
+                        "Peer": peer, "Field": field, "Operator": "lgt",
+                        "Value": value, "CreationDate": now,
+                        "ExpireDate": None, "Action": "restrict",
+                    })
+        try:
+            with self.engine.begin() as conn:
+                conn.execute(self.peerJobTable.insert(), records)
+            self.__getJobs()
+            # Peer models store their scheduled jobs locally for rendering.
+            c = self.WireguardConfigurations.get(configuration)
+            if c is not None:
+                for peer in peer_ids:
+                    found, target = c.searchPeer(peer)
+                    if found:
+                        target.getJobs()
+            return True, None
+        except Exception:
+            return False, "Could not store peer limits"
+
     def getPeerJobLogs(self, configurationName):
         return self.JobLogger.getLogs(configurationName)
 
@@ -153,14 +201,35 @@ class PeerJobs:
             if c is not None:
                 f, fp = c.searchPeer(job.Peer)
                 if f:
-                    if job.Field in ["total_receive", "total_sent", "total_data"]:
-                        s = job.Field.split("_")[1]
-                        x: float = getattr(fp, f"total_{s}") + getattr(fp, f"cumu_{s}")
-                        y: float = float(job.Value)
-                    else:
-                        x: datetime = datetime.now()
-                        y: datetime = datetime.strptime(job.Value, "%Y-%m-%d %H:%M:%S")
-                    runAction: bool = self.__runJob_Compare(x, y, job.Operator)
+                    try:
+                        if job.Field in ["total_receive", "total_sent", "total_data", "quota_total_data"]:
+                            # Cached Peer objects lag behind DB transfer refreshes. Read the
+                            # most recently persisted raw upload/download counters instead.
+                            with c.engine.connect() as conn:
+                                row = conn.execute(
+                                    c.peersTable.select().where(c.peersTable.c.id == fp.id)
+                                ).mappings().fetchone()
+                            if row is None:
+                                continue
+                            received = float(row["total_receive"] or 0) + float(row["cumu_receive"] or 0)
+                            sent = float(row["total_sent"] or 0) + float(row["cumu_sent"] or 0)
+                            if job.Field == "quota_total_data":
+                                runAction = quota_reached(received, sent, job.Value)
+                            else:
+                                raw = {"total_receive": received, "total_sent": sent,
+                                       "total_data": received + sent}[job.Field]
+                                runAction = self.__runJob_Compare(raw, float(job.Value), job.Operator)
+                        elif job.Field == "date":
+                            x: datetime = datetime.now()
+                            y: datetime = datetime.strptime(job.Value, "%Y-%m-%d %H:%M:%S")
+                            runAction = self.__runJob_Compare(x, y, job.Operator)
+                        else:
+                            continue
+                    except (ValueError, TypeError, KeyError, db.exc.SQLAlchemyError):
+                        # Avoid spinning the scheduler on temporary database locks.
+                        # Do not copy invalid policy payloads into user-facing logs.
+                        self.JobLogger.log(job.JobID, False, "Invalid policy; review scheduled job")
+                        continue
                     if runAction:
                         s = False
                         if job.Action == "restrict":

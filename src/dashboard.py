@@ -27,6 +27,7 @@ from modules.PeerJob import PeerJob
 from modules.SystemStatus import SystemStatus
 from modules.PeerShareLinks import PeerShareLinks
 from modules.PeerJobs import PeerJobs
+from modules.PeerLimits import parse_creation_limits
 from modules.DashboardConfig import DashboardConfig
 from modules.WireguardConfiguration import WireguardConfiguration
 from modules.AmneziaConfiguration import AmneziaConfiguration
@@ -873,6 +874,8 @@ def API_addPeers(configName):
         try:
             
 
+            # Validate policy BEFORE provisioning any tunnel/peer.
+            duration_days, quota_gb, traffic_factor = parse_creation_limits(data)
             bulkAdd: bool = data.get("bulkAdd", False)
             bulkAddAmount: int = data.get('bulkAddAmount', 0)
             preshared_key_bulkAdd: bool = data.get('preshared_key_bulkAdd', False)
@@ -952,6 +955,12 @@ def API_addPeers(configName):
                 if len(keyPairs) == 0 or (bulkAdd and len(keyPairs) != bulkAddAmount):
                     return ResponseObject(False, "Generating key pairs by bulk failed")
                 status, addedPeers, message = config.addPeers(keyPairs)
+                if status:
+                    applied, error = AllPeerJobs.provision_creation_limits(
+                        configName, [p.id for p in addedPeers], duration_days, quota_gb, traffic_factor)
+                    if not applied:
+                        config.restrictPeers([p.id for p in addedPeers])
+                        return ResponseObject(False, "Peers created but policy setup failed; access restriction attempted. Inspect peers before sharing.")
                 return ResponseObject(status=status, message=message, data=addedPeers)
     
             else:
@@ -1011,7 +1020,15 @@ def API_addPeers(configName):
                         "notes": notes
                     }]
                 )
+                if status:
+                    applied, error = AllPeerJobs.provision_creation_limits(
+                        configName, [p.id for p in addedPeers], duration_days, quota_gb, traffic_factor)
+                    if not applied:
+                        config.restrictPeers([p.id for p in addedPeers])
+                        return ResponseObject(False, "Peer created but policy setup failed; access restriction attempted. Inspect peer before sharing.")
                 return ResponseObject(status=status, message=message, data=addedPeers)
+        except ValueError as e:
+            return ResponseObject(False, str(e))
         except Exception as e:
             app.logger.error("Add peers failed", e)
             return ResponseObject(False, f"Add peers failed.")

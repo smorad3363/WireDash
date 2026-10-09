@@ -56,6 +56,17 @@ WORKDIR /workspace/awg-tools/src
 RUN make && chmod +x wg*
 
 #
+# ADMIN UI: build Vue sources into the shipped runtime rather than using
+# committed (and possibly stale) dist artifacts.
+#
+FROM node:22-alpine AS admin-ui
+WORKDIR /workspace/app
+COPY ./src/static/app/package*.json ./
+RUN npm ci --no-audit --no-fund
+COPY ./src/static/app ./
+RUN npm run build
+
+#
 # PIP DEPENDENCY BUILDING
 # Base: Alpine
 #
@@ -129,6 +140,7 @@ RUN mkdir /data /configs -p ${WGDASH}/src /etc/amnezia/amneziawg \
 
 # Copy the venv and source files from local compiled locations or repos
 COPY ./src ${WGDASH}/src
+COPY --from=admin-ui /workspace/dist/WGDashboardAdmin/ ${WGDASH}/src/static/dist/WGDashboardAdmin/
 COPY --from=pip-builder /opt/wgdashboard/src/venv /opt/wgdashboard/src/venv
 COPY ./docker/wg0.conf.template /tmp/wg0.conf.template
 COPY ./docker/wg-dashboard-oidc-providers.json.template /tmp/wg-dashboard-oidc-providers.json.template

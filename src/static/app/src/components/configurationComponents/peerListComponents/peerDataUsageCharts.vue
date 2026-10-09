@@ -101,7 +101,8 @@ onBeforeUnmount(() => {
 	fetchRealtimeTrafficInterval.value = undefined;
 })
 const peersDataUsageChartData = computed(() => {
-	let data = props.configurationPeers.filter(x => (x.cumu_data + x.total_data) > 0)
+	let data = props.configurationPeers.filter(x =>
+		(x.cumu_receive + x.total_receive + x.cumu_sent + x.total_sent) > 0)
 	
 	return {
 		labels: data.map(x => {
@@ -109,16 +110,15 @@ const peersDataUsageChartData = computed(() => {
 			return `Untitled Peer - ${x.id}`
 		}),
 		datasets: [{
-			label: 'Total Data Usage',
-			data: data.map(x => x.cumu_data + x.total_data),
-			backgroundColor: data.map(x => `#ffc107`),
-			tooltip: {
-				callbacks: {
-					label: (tooltipItem) => {
-						return `${tooltipItem.formattedValue} GB`
-					}
-				}
-			}
+			label: GetLocale('Data Received'),
+			data: data.map(x => x.cumu_receive + x.total_receive),
+			backgroundColor: '#0d6efd',
+			stack: 'usage'
+		}, {
+			label: GetLocale('Data Sent'),
+			data: data.map(x => x.cumu_sent + x.total_sent),
+			backgroundColor: '#198754',
+			stack: 'usage'
 		}]
 	}
 })
@@ -163,7 +163,12 @@ const peersDataUsageChartOption = computed(() => {
 		responsive: true,
 		plugins: {
 			legend: {
-				display: false
+				display: true
+			},
+			tooltip: {
+				callbacks: {
+					label: (item) => `${item.dataset.label}: ${item.formattedValue} GB`
+				}
 			}
 		},
 		scales: {

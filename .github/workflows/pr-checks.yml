@@ -17,6 +17,8 @@ jobs:
         run: bash -n install.sh deploy/wgdashbackup.sh deploy/wgd-watchdog.sh deploy/legacy/fix-wgdashboard-hang.sh tests/smoke.sh
       - name: Python AST test
         run: python3 tests/check_patch.py
+      - name: Peer traffic quota tests
+        run: python3 tests/test_peer_limits.py
       - name: ShellCheck
         run: shellcheck -S warning install.sh deploy/wgdashbackup.sh deploy/wgd-watchdog.sh tests/smoke.sh
       - name: Compose parse
@@ -29,6 +31,14 @@ jobs:
         run: docker build --file docker/Dockerfile --tag wiredash:pr-check .
       - name: Validate code baked into image
         run: docker run --rm -v "$PWD/tests:/tests:ro" --entrypoint python3 wiredash:pr-check /tests/check_patch.py /opt/wgdashboard/src/modules/PeerShareLinks.py
+      - name: Check actual published UI and quota code in image
+        run: |
+          docker run --rm --entrypoint sh wiredash:pr-check -ec '
+            test -f /opt/wgdashboard/src/modules/PeerLimits.py
+            grep -Rq "Total upload + download" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
+            grep -Rq "Traffic weight" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
+            grep -Rq "Validity (days" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
+          '
       - name: Live HTTP smoke on disposable GitHub runner
         run: |
           set -Eeuo pipefail

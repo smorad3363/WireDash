@@ -74,6 +74,11 @@ Never fetch application files from the moving `main` branch during installation.
 
 The Docker build checks out `WGDashboard/amneziawg-go` at `2ac739347721a985001d71f49fb36d6fcdebe6f9` and `WGDashboard/amneziawg-tools` at `5d6179a6d0842e98dfb349c28cf1bd8e4b9d1079`. Base container image tags and OS package indices may still change; full binary reproducibility requires digest pinning plus dependency locks and is not claimed here.
 
+## Per-peer limits and raw traffic
+The Add Peers modal and legacy Add Peers page support validity in days (0 = unlimited), a shared **upload + download** quota in GB (0 = unlimited), and an admin-selected traffic weight between 0.1 and 10 (default 1). Both WireGuard and AmneziaWG use the same policy logic, including bulk creation. Policies are persisted as scheduled restrict jobs in the job database; the existing job scheduler checks them periodically rather than at packet time. Enforcement therefore has an interval delay and may exceed the threshold temporarily. A failed policy write attempts to restrict newly created peers and returns an error instead of silently provisioning unlimited service.
+
+The metering weight applies **only** to quota decisions: (raw received GB + raw sent GB) multiplied by weight must reach the configured quota. Account usage summaries and charts always show the **unweighted, separate** received and sent values, and quota weights are omitted from job event logs. Administrators can view/edit limits in Schedule Jobs; standard users do not see metering weights in logs. The image build compiles admin Vue sources so the UI is not stale.
+
 ## Maintenance contract for future AI editors
 
 The single canonical command in README, this file, and AGENTS.md MUST stay byte-for-byte identical. Only merge reviewed changes to `main`. `.github/workflows/docker.yml` must publish `sha-<commit>` images for `main` commits; `install.sh` resolves that commit and pins every download to it. Keep automatic upgrade behavior and data-preserving rollback. Update tests and all docs together; never introduce separate install and update commands.
