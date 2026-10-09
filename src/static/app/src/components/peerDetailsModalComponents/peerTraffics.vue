@@ -107,7 +107,7 @@ const historicalSentData = computed(() => {
 		labels: traffics.value.map(x => x.time),
 		datasets: [
 			{
-				label: GetLocale('Data Sent'),
+				label: 'Download',
 				data: historicalSent.value,
 				fill: 'start',
 				borderColor: '#198754',
@@ -125,7 +125,7 @@ const historicalReceivedData = computed(() => {
 		labels:  traffics.value.map(x => x.time),
 		datasets: [
 			{
-				label: GetLocale('Data Received'),
+				label: 'Upload',
 				data: historicalReceive.value,
 				fill: 'start',
 				borderColor: '#0d6efd',
@@ -149,7 +149,7 @@ const historicalReceivedData = computed(() => {
 			<div class="d-flex flex-column gap-3">
 				<div>
 					<p>
-						<LocaleText t="Data Received"></LocaleText>
+						Upload
 					</p>
 					<Line
 						:options="dataUsageChartOption"
@@ -159,7 +159,7 @@ const historicalReceivedData = computed(() => {
 				</div>
 				<div>
 					<p>
-						<LocaleText t="Data Sent"></LocaleText>
+						Download
 					</p>
 					<Line
 						:options="dataUsageChartOption"

@@ -102,7 +102,7 @@ onBeforeUnmount(() => {
 })
 const peersDataUsageChartData = computed(() => {
 	let data = props.configurationPeers.filter(x =>
-		(x.cumu_receive + x.total_receive + x.cumu_sent + x.total_sent) > 0)
+		(x.metered_data) > 0)
 	
 	return {
 		labels: data.map(x => {
@@ -110,13 +110,13 @@ const peersDataUsageChartData = computed(() => {
 			return `Untitled Peer - ${x.id}`
 		}),
 		datasets: [{
-			label: GetLocale('Data Received'),
-			data: data.map(x => x.cumu_receive + x.total_receive),
+			label: 'Upload',
+			data: data.map(x => x.metered_receive),
 			backgroundColor: '#0d6efd',
 			stack: 'usage'
 		}, {
-			label: GetLocale('Data Sent'),
-			data: data.map(x => x.cumu_sent + x.total_sent),
+			label: 'Download',
+			data: data.map(x => x.metered_sent),
 			backgroundColor: '#198754',
 			stack: 'usage'
 		}]
@@ -127,7 +127,7 @@ const peersRealtimeSentData = computed(() => {
 		labels: [...historySentData.value.timestamp],
 		datasets: [
 			{
-				label: GetLocale('Data Sent'),
+				label: 'Download',
 				data: [...historySentData.value.data],
 				fill: 'start',
 				borderColor: '#198754',
@@ -144,7 +144,7 @@ const peersRealtimeReceivedData = computed(() => {
 		labels: [...historyReceivedData.value.timestamp],
 		datasets: [
 			{
-				label: GetLocale('Data Received'),
+				label: 'Upload',
 				data: [...historyReceivedData.value.data],
 				fill: 'start',
 				borderColor: '#0d6efd',
@@ -252,7 +252,7 @@ const realtimePeersChartOption = computed(() => {
 			<div class="card rounded-3 bg-transparent " style="height: 270px">
 				<div class="card-header bg-transparent border-0 d-flex align-items-center">
 					<small class="text-muted">
-						<LocaleText t="Real Time Received Data Usage"></LocaleText>
+						Interface received (raw speed)
 					</small>
 					<small class="text-primary fw-bold ms-auto" v-if="historyReceivedData.data.length > 0">
 						{{historyReceivedData.data[historyReceivedData.data.length - 1]}} MB/s
@@ -271,7 +271,7 @@ const realtimePeersChartOption = computed(() => {
 			<div class="card rounded-3 bg-transparent " style="height: 270px">
 				<div class="card-header bg-transparent border-0 d-flex align-items-center">
 					<small class="text-muted">
-						<LocaleText t="Real Time Sent Data Usage"></LocaleText>
+						Interface sent (raw speed)
 					</small>
 					<small class="text-success fw-bold ms-auto"  v-if="historySentData.data.length > 0">
 						{{historySentData.data[historySentData.data.length - 1]}} MB/s
