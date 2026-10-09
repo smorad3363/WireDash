@@ -5,6 +5,7 @@ from .DatabaseConnection import ConnectionString
 from .DashboardLogger import DashboardLogger
 import sqlalchemy as db
 from .WireguardConfiguration import WireguardConfiguration
+from .PeerLimits import parse_quota_payload
 
 class Assignment:
     def __init__(self, **kwargs):
@@ -140,19 +141,31 @@ class DashboardClientsPeerAssignment:
             peer = filter(lambda e : e.id == a.PeerID, 
                           self.wireguardConfigurations[a.ConfigurationName].Peers)
             for p in peer:
+                measured = p.metered_usage()
+                # Do not expose the weighting parameter to the client portal.
+                public_jobs = []
+                for job in p.jobs:
+                    if job.Field == "quota_total_data":
+                        try:
+                            limit, _ = parse_quota_payload(job.Value)
+                            public_jobs.append({**job.toJson(), "Field": "total_data", "Value": str(limit)})
+                        except ValueError:
+                            continue
+                    else:
+                        public_jobs.append(job.toJson())
                 peers.append({
                     'assignment_id': a.AssignmentID,
                     'protocol': self.wireguardConfigurations[a.ConfigurationName].Protocol,
                     'id': p.id,
                     'private_key': p.private_key,
                     'name': p.name,
-                    'received_data': p.total_receive + p.cumu_receive,
-                    'sent_data': p.total_sent + p.cumu_sent,
-                    'data': p.total_data + p.cumu_data,
+                    'received_data': measured["receive"],
+                    'sent_data': measured["sent"],
+                    'data': measured["total"],
                     'status': p.status,
                     'latest_handshake': p.latest_handshake,
                     'allowed_ip': p.allowed_ip,
-                    'jobs': p.jobs,
+                    'jobs': public_jobs,
                     'configuration_name': a.ConfigurationName,
                     'peer_configuration_data': p.downloadPeer()
                 })

@@ -56,9 +56,9 @@ class AmneziaConfiguration(WireguardConfiguration):
             "SaveConfig": self.SaveConfig,
             "Info": self.configurationInfo.model_dump(),
             "DataUsage": {
-                "Total": sum(list(map(lambda x: x.cumu_data + x.total_data, self.Peers))),
-                "Sent": sum(list(map(lambda x: x.cumu_sent + x.total_sent, self.Peers))),
-                "Receive": sum(list(map(lambda x: x.cumu_receive + x.total_receive, self.Peers)))
+                "Total": sum(p.metered_usage()["total"] for p in self.Peers),
+                "Sent": sum(p.metered_usage()["sent"] for p in self.Peers),
+                "Receive": sum(p.metered_usage()["receive"] for p in self.Peers)
             },
             "ConnectedPeers": len(list(filter(lambda x: x.status == "running", self.Peers))),
             "TotalPeers": len(self.Peers),
