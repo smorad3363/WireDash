@@ -46,6 +46,12 @@ export const WireguardConfigurationsStore = defineStore('WireguardConfigurations
 						type: 'number'
 					},
 					{
+						display: "Combined Traffic Quota",
+						value: "quota_total_data",
+						unit: "GB",
+						type: 'number'
+					},
+					{
 						display: GetLocale("Date"),
 						value: "date",
 						type: 'date'

@@ -27,6 +27,9 @@ export default {
 			data: {
 				bulkAdd: false,
 				bulkAddAmount: 0,
+				duration_days: 0,
+				quota_gb: 0,
+				traffic_factor: 1,
 				name: "",
 				allowed_ips: [],
 				private_key: "",
@@ -84,7 +87,12 @@ export default {
 					if (this.data[x].length === 0) status = false;
 				});
 			}
-			return status;
+			const d = Number(this.data.duration_days);
+			const q = Number(this.data.quota_gb);
+			const f = Number(this.data.traffic_factor);
+			return status && Number.isInteger(d) && d >= 0 && d <= 3650 &&
+				Number.isFinite(q) && q >= 0 && q <= 1000000 &&
+				Number.isFinite(f) && f >= 0.1 && f <= 10 && (q > 0 || f === 1);
 		},
 		getProtocol(){
 			return this.store.Configurations.find(x => x.Name === this.$route.params.id).Protocol;
@@ -95,6 +103,9 @@ export default {
 			if(!newVal){
 				this.data.bulkAddAmount = "";
 			}
+		},
+		'data.quota_gb'(q){
+			if (!(q > 0)) this.data.traffic_factor = 1;
 		},
 		'data.bulkAddAmount'(){
 			if (this.data.bulkAddAmount > this.availableIp.length){
@@ -130,7 +141,30 @@ export default {
 			<EndpointAllowedIps :saving="saving" :data="data"></EndpointAllowedIps>
 			<DnsInput :saving="saving" :data="data"></DnsInput>
 
-			<hr class="mb-0 mt-2">
+			<div class="card border rounded-3 mb-3">
+  <div class="card-body py-3">
+    <strong class="d-block mb-2">Peer Limits (applied at creation)</strong>
+    <div class="row gy-2">
+      <div class="col-md-4">
+        <label class="form-label small" for="limit-duration-page">Validity (days; 0 = unlimited)</label>
+        <input id="limit-duration-page" type="number" min="0" max="3650" step="1" class="form-control form-control-sm"
+          v-model.number="this.data.duration_days" :disabled="saving">
+      </div>
+      <div class="col-md-4">
+        <label class="form-label small" for="limit-quota-page">Total upload + download (GB; 0 = unlimited)</label>
+        <input id="limit-quota-page" type="number" min="0" max="1000000" step="0.01" class="form-control form-control-sm"
+          v-model.number="this.data.quota_gb" :disabled="saving">
+      </div>
+      <div class="col-md-4">
+        <label class="form-label small" for="limit-weight-page">Traffic weight</label>
+        <input id="limit-weight-page" type="number" min="0.1" max="10" step="0.1" class="form-control form-control-sm"
+          v-model.number="this.data.traffic_factor" :disabled="saving || !(this.data.quota_gb > 0)">
+      </div>
+    </div>
+    <small class="text-muted">Traffic limit checks the sum of upload and download. Charts and usage counters always show raw traffic. For bulk creation, the limits apply to every new peer.</small>
+  </div>
+</div>
+<hr class="mb-0 mt-2">
 			<div class="row gy-3">
 				<div class="col-sm" v-if="!this.data.bulkAdd">
 					<PresharedKeyInput :saving="saving" :data="data" :bulk="this.data.bulkAdd"></PresharedKeyInput>

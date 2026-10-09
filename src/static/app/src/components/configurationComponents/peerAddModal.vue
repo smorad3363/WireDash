@@ -22,6 +22,9 @@ const wireguardStore = WireguardConfigurationsStore()
 const peerData = ref({
 	bulkAdd: false,
 	bulkAddAmount: 0,
+	duration_days: 0,
+	quota_gb: 0,
+	traffic_factor: 1,
 	name: "",
 	allowed_ips: [],
 	private_key: "",
@@ -64,7 +67,16 @@ const allRequireFieldsFilled = computed(() => {
 			if (peerData.value[x].length === 0) status = false;
 		});
 	}
-	return status;
+	const d = Number(peerData.value.duration_days);
+	const q = Number(peerData.value.quota_gb);
+	const f = Number(peerData.value.traffic_factor);
+	return status && Number.isInteger(d) && d >= 0 && d <= 3650
+		&& Number.isFinite(q) && q >= 0 && q <= 1000000
+		&& Number.isFinite(f) && f >= 0.1 && f <= 10 && (q > 0 || f === 1);
+})
+
+watch(() => peerData.value.quota_gb, (quota) => {
+	if (!(quota > 0)) peerData.value.traffic_factor = 1;
 })
 
 const peerCreate = () => {
@@ -111,7 +123,30 @@ watch(() => {
 								<AllowedIPsInput :availableIp="availableIp" :saving="saving" :data="peerData"></AllowedIPsInput>
 							</template>
 						</div>
-						<hr>
+						<div class="card border rounded-3 mb-3">
+  <div class="card-body py-3">
+    <strong class="d-block mb-2">Peer Limits (applied at creation)</strong>
+    <div class="row gy-2">
+      <div class="col-md-4">
+        <label class="form-label small" for="limit-duration-modal">Validity (days; 0 = unlimited)</label>
+        <input id="limit-duration-modal" type="number" min="0" max="3650" step="1" class="form-control form-control-sm"
+          v-model.number="peerData.duration_days" :disabled="saving">
+      </div>
+      <div class="col-md-4">
+        <label class="form-label small" for="limit-quota-modal">Total upload + download (GB; 0 = unlimited)</label>
+        <input id="limit-quota-modal" type="number" min="0" max="1000000" step="0.01" class="form-control form-control-sm"
+          v-model.number="peerData.quota_gb" :disabled="saving">
+      </div>
+      <div class="col-md-4">
+        <label class="form-label small" for="limit-weight-modal">Traffic weight</label>
+        <input id="limit-weight-modal" type="number" min="0.1" max="10" step="0.1" class="form-control form-control-sm"
+          v-model.number="peerData.traffic_factor" :disabled="saving || !(peerData.quota_gb > 0)">
+      </div>
+    </div>
+    <small class="text-muted">Traffic limit checks the sum of upload and download. Charts and usage counters always show raw traffic. For bulk creation, the limits apply to every new peer.</small>
+  </div>
+</div>
+<hr>
 						<div class="accordion mb-3" id="peerAddModalAccordion">
 							<div class="accordion-item">
 								<h2 class="accordion-header">
