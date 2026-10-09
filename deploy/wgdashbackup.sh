@@ -253,6 +253,15 @@ backup() {
   mv "$archive" "$OUT/$name"
   archive=$OUT/$name
   printf '%s  %s\n' "$sha" "$name" > "$OUT/$name.sha256"
+  # Keep the newest four undelivered local snapshots. Otherwise Telegram outages
+  # could fill the host disk even though sent-backup retention is bounded.
+  mapfile -t old < <(find "$OUT" -maxdepth 1 -type f -name 'wgdashboard-*.tar.gz' \
+    -printf '%T@ %p\\n' | sort -nr | cut -d' ' -f2- | \
+    while IFS= read -r pending; do
+      [[ -f "$pending.sent" ]] || printf '%s\\n' "$pending"
+    done | tail -n +5)
+  for part in "${old[@]}"; do rm -f -- "$part" "$part.sha256"; done
+
   size=$(stat -c%s "$archive")
   if (( size > 45000000 )); then
     split -b 45000000 -d -a 4 "$archive" "$tmp/$name.part-"

@@ -1,7 +1,6 @@
 # WireDash integrated installer
 
-**Review status:** The branch is a proposed implementation, not a released/tested production image.
-The owner must review the upstream base version and security patches, approve the tag, and make the GHCR image public.
+**Release policy:** Merge only after all required CI checks pass. The command always uses the latest reviewed main commit and will build the matching image locally if the registry package is private. Live peer-continuity and restore drills still require an isolated test host.
 
 ## Canonical command — both INSTALL and UPDATE
 
@@ -20,14 +19,14 @@ curl -fsSL https://raw.githubusercontent.com/smorad3363/WireDash/main/install.sh
 Options: `--port 10086`, `--tz Europe/Istanbul`, `--panel-bind 127.0.0.1`,
 `--skip-backup`, `--skip-watchdog`, `--dry-run`, `--upgrade`, `--migrate`, `--uninstall`.
 The default web port is 10086/TCP; WireGuard is 51820/UDP.
-A regular invocation refuses unmanaged existing containers. Migration or upgrade is **explicit only**.
+A regular invocation automatically updates WireDash-managed containers (same command). Upstream/unmanaged migration remains **explicit only**.
 `--uninstall` removes helper units, not containers, volumes, backups or keys.
 
 ## Backup
 
 Run `sudo wireback` then choose option 1 to set Telegram credentials interactively.
 The original `wgdashbackup` name remains valid. A backup is an online SQLite snapshot without stopping Docker.
-Retention is four delivered archives with 45 MB Telegram splitting.
+Retention is four delivered and four undelivered local archives, with 45 MB Telegram splitting.
 Telegram timers stay disabled until credentials are configured.
 `sudo wireback --status` shows timers and last successful delivery.
 **Restore is different:** `--restore` intentionally stops the VPN, replaces volume data and requires `RESTORE` confirmation. Do not run on a live production server except during actual disaster recovery.
