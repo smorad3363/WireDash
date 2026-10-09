@@ -29,12 +29,57 @@ class PeerJobs:
                                      db.Column('ExpireDate', (db.DATETIME if DashboardConfig.GetConfig("Database", "type")[1] == 'sqlite' else db.TIMESTAMP)),
                                      db.Column('Action', db.String(255), nullable=False),
                                      )
+        self.weightsTable = db.Table(
+            'PeerTrafficWeights', self.metadata,
+            db.Column('Configuration', db.String(255), primary_key=True),
+            db.Column('Peer', db.String(255), primary_key=True),
+            db.Column('Weight', db.String(32), nullable=False),
+        )
         self.metadata.create_all(self.engine)
+        self._weights = {}
+        self._load_weights()
         self.__getJobs()
         self.JobLogger: PeerJobLogger = PeerJobLogger(self, DashboardConfig)
         self.WireguardConfigurations = WireguardConfigurations
         self.AllPeerShareLinks = AllPeerShareLinks
         self.cleanJob(init=True)
+
+    def _load_weights(self):
+        """Backfill pre-existing quota policies, including already expired jobs."""
+        with self.engine.begin() as conn:
+            records = conn.execute(self.weightsTable.select()).mappings().all()
+            factors = {(r["Configuration"], r["Peer"]): r["Weight"] for r in records}
+            historic = conn.execute(
+                self.peerJobTable.select().where(
+                    self.peerJobTable.c.Field == "quota_total_data"
+                ).order_by(self.peerJobTable.c.CreationDate)
+            ).mappings().all()
+            missing = {}
+            for job in historic:
+                key = (job["Configuration"], job["Peer"])
+                if key not in factors:
+                    try:
+                        missing[key] = str(parse_quota_payload(job["Value"])[1])
+                    except ValueError:
+                        continue
+            for (configuration, peer), weight in missing.items():
+                conn.execute(self.weightsTable.insert().values(
+                    Configuration=configuration, Peer=peer, Weight=weight))
+                factors[(configuration, peer)] = weight
+        self._weights = factors
+
+    def weight_for(self, configuration, peer):
+        return self._weights.get((configuration, peer), "1")
+
+    def forget_weights(self, configuration, peers):
+        """Keep weights after restriction; delete only on permanent peer removal."""
+        with self.engine.begin() as conn:
+            for peer in peers:
+                conn.execute(self.weightsTable.delete().where(db.and_(
+                    self.weightsTable.c.Configuration == configuration,
+                    self.weightsTable.c.Peer == peer)))
+        for peer in peers:
+            self._weights.pop((configuration, peer), None)
 
     def __getJobs(self):
         self.Jobs.clear()
@@ -112,6 +157,18 @@ class PeerJobs:
                         self.JobLogger.log(Job.JobID, Message="Traffic quota rule updated")
                     else:
                         self.JobLogger.log(Job.JobID, Message=f"Job is updated from if {currentJob[0].Field} {currentJob[0].Operator} {currentJob[0].Value} then {currentJob[0].Action}; to if {Job.Field} {Job.Operator} {Job.Value} then {Job.Action}")
+            if Job.Field == "quota_total_data":
+                _, weight = parse_quota_payload(Job.Value)
+                with self.engine.begin() as conn:
+                    updated = conn.execute(self.weightsTable.update().where(db.and_(
+                        self.weightsTable.c.Configuration == Job.Configuration,
+                        self.weightsTable.c.Peer == Job.Peer
+                    )).values(Weight=str(weight)))
+                    if updated.rowcount == 0:
+                        conn.execute(self.weightsTable.insert().values(
+                            Configuration=Job.Configuration, Peer=Job.Peer,
+                            Weight=str(weight)))
+                self._weights[(Job.Configuration, Job.Peer)] = str(weight)
             self.__getJobs()
             self.WireguardConfigurations.get(Job.Configuration).searchPeer(Job.Peer)[1].getJobs()
             return True, list(
@@ -149,6 +206,14 @@ class PeerJobs:
                     }).where(self.peerJobTable.columns.Configuration == ConfigurationName)
                 )
             self.__getJobs()
+            with self.engine.begin() as conn:
+                conn.execute(self.weightsTable.update().where(
+                    self.weightsTable.c.Configuration == ConfigurationName
+                ).values(Configuration=NewConfigurationName))
+            self._weights = {
+                (NewConfigurationName if c == ConfigurationName else c, p): value
+                for (c, p), value in self._weights.items()
+            }
             return True, None
         except Exception as e:
             return False, str(e)
@@ -176,6 +241,14 @@ class PeerJobs:
         try:
             with self.engine.begin() as conn:
                 conn.execute(self.peerJobTable.insert(), records)
+                if quota_gb:
+                    conn.execute(self.weightsTable.insert(), [
+                        {"Configuration": configuration, "Peer": peer,
+                         "Weight": str(traffic_factor)} for peer in peer_ids
+                    ])
+            if quota_gb:
+                for peer in peer_ids:
+                    self._weights[(configuration, peer)] = str(traffic_factor)
             self.__getJobs()
             # Peer models store their scheduled jobs locally for rendering.
             c = self.WireguardConfigurations.get(configuration)

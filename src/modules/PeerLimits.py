@@ -57,6 +57,17 @@ def parse_quota_payload(value):
     return quota, weight
 
 
+def metered_usage(received_gb, sent_gb, weight=1):
+    """Server-received = peer upload; server-sent = peer download."""
+    factor = _decimal(weight, "traffic weight")
+    if not MIN_WEIGHT <= factor <= MAX_WEIGHT:
+        raise ValueError("Invalid traffic weight")
+    upload = _decimal(received_gb, "upload") * factor
+    download = _decimal(sent_gb, "download") * factor
+    return {"receive": float(upload), "sent": float(download),
+            "total": float(upload + download)}
+
+
 def quota_reached(received_gb, sent_gb, value):
     quota, weight = parse_quota_payload(value)
     receive = _decimal(received_gb, "received usage")

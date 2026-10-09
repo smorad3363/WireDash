@@ -5,7 +5,7 @@ import sys
 import unittest
 
 sys.path.insert(0, str(pathlib.Path("src").resolve()))
-from modules.PeerLimits import parse_creation_limits, quota_payload, quota_reached
+from modules.PeerLimits import parse_creation_limits, quota_payload, quota_reached, metered_usage
 
 
 class QuotaTest(unittest.TestCase):
@@ -25,6 +25,13 @@ class QuotaTest(unittest.TestCase):
         self.assertTrue(quota_reached(4, 6, quota_payload(10, 1)))
         self.assertFalse(quota_reached(4, 6, quota_payload(10, 0.5)))
         self.assertTrue(quota_reached(5, 5, quota_payload(10, 1.5)))
+
+    def test_weighted_directions_remain_different(self):
+        measured = metered_usage(20, 30, 2)
+        self.assertEqual(measured, {"receive": 40.0, "sent": 60.0, "total": 100.0})
+        self.assertNotEqual(measured["receive"], measured["sent"])
+        self.assertTrue(quota_reached(20, 30, quota_payload(100, 2)))
+        self.assertEqual(metered_usage(20, 30, 1)["total"], 50)
 
     def test_validate_bad_inputs(self):
         for data in [
@@ -48,10 +55,20 @@ class QuotaTest(unittest.TestCase):
         self.assertIn("Traffic quota rule updated", jobs)
         self.assertNotIn("f\"{Job.Value}", jobs)
         graph = (root/"peerListComponents/peerDataUsageCharts.vue").read_text()
-        self.assertIn("cumu_receive + x.total_receive", graph)
-        self.assertIn("cumu_sent + x.total_sent", graph)
-        self.assertIn("GetLocale('Data Received')", graph)
-        self.assertIn("GetLocale('Data Sent')", graph)
+        self.assertIn("x.metered_receive", graph)
+        self.assertIn("x.metered_sent", graph)
+        self.assertIn("'Upload'", graph)
+        self.assertIn("'Download'", graph)
+        peer = pathlib.Path("src/modules/Peer.py").read_text()
+        self.assertIn('"metered_receive": usage["receive"]', peer)
+        self.assertIn('"metered_sent": usage["sent"]', peer)
+        self.assertIn('"metered_data": usage["total"]', peer)
+        jobs = pathlib.Path("src/modules/PeerJobs.py").read_text()
+        self.assertIn("PeerTrafficWeights", jobs)
+        client = pathlib.Path("src/modules/DashboardClientsPeerAssignment.py").read_text()
+        self.assertIn('measured["receive"]', client)
+        self.assertIn('measured["sent"]', client)
+        self.assertNotIn("'traffic_factor'", client)
 
 
 if __name__ == "__main__":
