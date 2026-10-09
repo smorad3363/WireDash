@@ -155,7 +155,7 @@ fi
 # Capture a checked local snapshot before changing an existing running deployment.
 snapshot() {
   local target=$1
-  local data wg awg tmp item
+  local data wg awg tmp
   mkdir -p /var/backups/wgdashboard
   mapfile -t mounts < <(docker inspect "$CONTAINER" | python3 -c '
 import json,sys

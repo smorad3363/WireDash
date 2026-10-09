@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2034,SC2046
+# Preserved legacy backup implementation: unused legacy locals and intentional
+# optional .env tar word splitting (do not rewrite backup/restore routines).
 # WGDashboard Docker LIVE backup + Telegram alerts + health monitor — Ubuntu / systemd / SQLite
 # v3.1: configurable backup interval; no Docker stop/restart during backup; restore compatibility fixes for quoted paths, 3/4-digit Telegram parts, TAR ./ roots, and verification extraction.
 set -Eeuo pipefail
