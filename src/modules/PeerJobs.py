@@ -225,7 +225,8 @@ class PeerJobs:
                             runAction = self.__runJob_Compare(x, y, job.Operator)
                         else:
                             continue
-                    except (ValueError, TypeError, KeyError):
+                    except (ValueError, TypeError, KeyError, db.exc.SQLAlchemyError):
+                        # Avoid spinning the scheduler on temporary database locks.
                         # Do not copy invalid policy payloads into user-facing logs.
                         self.JobLogger.log(job.JobID, False, "Invalid policy; review scheduled job")
                         continue
