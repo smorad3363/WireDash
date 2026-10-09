@@ -28,7 +28,7 @@ if [[ "$url" == *api.github.com* ]]; then
 fi
 case "$url" in
   */release-pointer/release.sha) printf '%s\\n' '""" + SHA + """' > "$destination" ;;
-  */""" + SHA + """/install.sh) printf '#!/usr/bin/env bash\\nprintf "resolved:%s\\n" "$WIREDASH_SOURCE_SHA"\\n' > "$destination" ;;
+  */""" + SHA + """/install.sh) printf '#!/usr/bin/env bash\\nprintf "resolved:%%s\\n" "$WIREDASH_SOURCE_SHA"\\n' > "$destination" ;;
   *) printf 'Unexpected URL %s\\n' "$url" >&2; exit 3 ;;
 esac
 """)
