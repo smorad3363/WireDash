@@ -1,6 +1,20 @@
 > [!WARNING]
 > All users running WGDashboard v4.2.x or later and hosted on the public internet are strongly advised to update to the latest release immediately. For more information: [v4.3.2 Release](https://github.com/WGDashboard/WGDashboard/releases/tag/v4.3.2)
 
+## WireDash — one command for install **and** update
+
+Run the **same exact command** every time, on a new Ubuntu server or an existing WireDash-managed server:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/smorad3363/WireDash/main/install.sh | sudo bash
+```
+
+The installer resolves a single immutable commit from `main`, uses only artifacts from that commit, and installs or updates the corresponding Docker image. It checks for existing managed installations, makes a verified backup before upgrades, and rolls back on deployment validation failures. Unmanaged/upstream installations require an explicitly reviewed `--migrate`. It will not wipe WireGuard keys or volumes.
+
+**For AI coding agents:** Do not change this command independently in another document. See [AGENTS.md](AGENTS.md) and [docs/INSTALL.md](docs/INSTALL.md). Every installer/CI change must preserve the identical command and support both fresh install and updates. Make no breaking change to this entrypoint.
+
+---
+
 > [!TIP]
 > 🎉 To help us better understand and improve WGDashboard’s performance, we’re launching the **WGDashboard Testing Program**. As part of this program, participants will receive free WireGuard VPN access to our server in Toronto, Canada, valid for **24 hours** or up to **1GB of total traffic**—whichever comes first. If you’d like to join, visit [https://wg.wgdashboard.dev/](https://wg.wgdashboard.dev/) for more details!
 

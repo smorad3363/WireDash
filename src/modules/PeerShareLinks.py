@@ -38,8 +38,12 @@ class PeerShareLinks:
 
 
     def getLink(self, Configuration: str, Peer: str) -> list[PeerShareLink]:
-        self.__getSharedLinks()
-        return list(filter(lambda x : x.Configuration == Configuration and x.Peer == Peer, self.Links))
+        # Links are loaded on init and after writes. Safe with exactly one gunicorn worker;
+        # multiple processes would each keep an independent, stale cache.
+        now = datetime.now()
+        # Expired links must not remain visible even if no subsequent write refreshed cache.
+        return [x for x in self.Links if x.Configuration == Configuration
+                and x.Peer == Peer and x.ExpireDate > now]
 
     def getLinkByID(self, ShareID: str) -> list[PeerShareLink]:
         self.__getSharedLinks()

@@ -254,6 +254,7 @@ def auth_req():
             appPrefix = APP_PREFIX if len(APP_PREFIX) > 0 else ''
             whiteList = [
                 # f'/static/', 
+                f'{appPrefix}/api/handshake',  # unauthenticated watchdog/healthcheck
                 f'{appPrefix}/api/validateAuthentication', 
                 f'{appPrefix}/api/authenticate', 
                 # f'{appPrefix}/api/getDashboardConfiguration',

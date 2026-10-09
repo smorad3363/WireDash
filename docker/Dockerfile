@@ -5,6 +5,7 @@
 
 # Pull the current golang-alpine image.
 FROM golang:1.26-alpine3.23 AS awg-go
+ARG AMNEZIA_GO_SHA=2ac739347721a985001d71f49fb36d6fcdebe6f9
 
 # Install build-dependencies.
 RUN apk add --no-cache \
@@ -14,7 +15,9 @@ RUN apk add --no-cache \
 
 # Standard working directory for WGDashboard
 RUN mkdir -p /workspace && \
-    git clone https://github.com/WGDashboard/amneziawg-go /workspace/awg
+    git clone https://github.com/WGDashboard/amneziawg-go /workspace/awg && \
+    git -C /workspace/awg checkout --detach "$AMNEZIA_GO_SHA" && \
+    test "$(git -C /workspace/awg rev-parse HEAD)" = "$AMNEZIA_GO_SHA"
 
 # Enable CGO compilation for AmneziaWG
 ENV CGO_ENABLED=1
@@ -31,6 +34,7 @@ RUN go version && \
 # Base: Alpine
 #
 FROM alpine:3.23 AS awg-tools
+ARG AMNEZIA_TOOLS_SHA=5d6179a6d0842e98dfb349c28cf1bd8e4b9d1079
 
 # Install needed dependencies.
 RUN apk add --no-cache \
@@ -42,7 +46,9 @@ RUN apk add --no-cache \
 
 # Get the workspace ready
 RUN mkdir -p /workspace && \
-    git clone https://github.com/WGDashboard/amneziawg-tools /workspace/awg-tools
+    git clone https://github.com/WGDashboard/amneziawg-tools /workspace/awg-tools && \
+    git -C /workspace/awg-tools checkout --detach "$AMNEZIA_TOOLS_SHA" && \
+    test "$(git -C /workspace/awg-tools rev-parse HEAD)" = "$AMNEZIA_TOOLS_SHA"
 
 # Change directory
 WORKDIR /workspace/awg-tools/src
@@ -135,9 +141,10 @@ RUN export out_adapt=$(ip -o -4 route show to default | awk '{print $NF}') \
     && chmod 600 /configs/wg0.conf.template \
     && cat /configs/wg0.conf.template
 
-# Set a healthcheck to determine the container its health
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD sh -c 'pgrep gunicorn > /dev/null && pgrep tail > /dev/null' || exit 1
+# HTTP healthcheck: process presence is not panel health.
+# Does not check the database; Compose also defines its own HTTP probe.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+  CMD sh -c 'curl -fsS --max-time 5 "http://127.0.0.1:${wgd_port:-10086}/api/handshake" >/dev/null' || exit 1
 
 # Expose ports on the container
 EXPOSE 10086
