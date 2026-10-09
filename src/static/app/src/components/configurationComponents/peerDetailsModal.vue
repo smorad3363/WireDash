@@ -122,7 +122,7 @@ defineEmits(['close'])
 												<LocaleText t="Total Usage"></LocaleText>
 											</small></p>
 											<strong class="h4 text-warning">
-												{{ (selectedPeer.total_data + selectedPeer.cumu_data).toFixed(4) }} GB
+												{{ selectedPeer.metered_data.toFixed(4) }} GB
 											</strong>
 										</div>
 										<i class="bi bi-arrow-down-up ms-auto h2 text-muted"></i>
@@ -134,9 +134,9 @@ defineEmits(['close'])
 									<div class="card-body d-flex">
 										<div>
 											<p class="mb-0 text-muted"><small>
-												<LocaleText t="Total Received"></LocaleText>
+												Upload
 											</small></p>
-											<strong class="h4 text-primary">{{(selectedPeer.total_receive + selectedPeer.cumu_receive).toFixed(4)}} GB</strong>
+											<strong class="h4 text-primary">{{selectedPeer.metered_receive.toFixed(4)}} GB</strong>
 										</div>
 										<i class="bi bi-arrow-down ms-auto h2 text-muted"></i>
 									</div>
@@ -147,9 +147,9 @@ defineEmits(['close'])
 									<div class="card-body d-flex">
 										<div>
 											<p class="mb-0 text-muted"><small>
-												<LocaleText t="Total Sent"></LocaleText>
+												Download
 											</small></p>
-											<strong class="h4 text-success">{{(selectedPeer.total_sent + selectedPeer.cumu_sent).toFixed(4)}} GB</strong>
+											<strong class="h4 text-success">{{selectedPeer.metered_sent.toFixed(4)}} GB</strong>
 										</div>
 										<i class="bi bi-arrow-up ms-auto h2 text-muted"></i>
 									</div>

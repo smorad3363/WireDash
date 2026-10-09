@@ -71,6 +71,10 @@ const emits = defineEmits(['select'])
 						{{ props.config.data.toFixed(4) }} / {{ totalDataLimit ? parseFloat(totalDataLimit).toFixed(4) : 'Unlimited'}} GB
 					</small>
 				</div>
+                <div class="d-flex justify-content-between text-muted small mb-1">
+                    <span>Download: {{ Number(props.config.sent_data || 0).toFixed(4) }} GB</span>
+                    <span>Upload: {{ Number(props.config.received_data || 0).toFixed(4) }} GB</span>
+                </div>
 				<div class="progress" role="progressbar" aria-valuenow="25" aria-valuemin="0" aria-valuemax="100" style="height: 6px">
 					<div class="progress-bar bg-primary"
 					     :style="{'width': '' + totalDataPercentage + '%'}"></div>

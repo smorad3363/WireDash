@@ -66,6 +66,14 @@ RUN npm ci --no-audit --no-fund
 COPY ./src/static/app ./
 RUN npm run build
 
+# Client portal also displays billed values and must be rebuilt from source.
+FROM node:22-alpine AS client-ui
+WORKDIR /workspace/client
+COPY ./src/static/client/package*.json ./
+RUN npm ci --no-audit --no-fund
+COPY ./src/static/client ./
+RUN npm run build
+
 #
 # PIP DEPENDENCY BUILDING
 # Base: Alpine
@@ -141,6 +149,7 @@ RUN mkdir /data /configs -p ${WGDASH}/src /etc/amnezia/amneziawg \
 # Copy the venv and source files from local compiled locations or repos
 COPY ./src ${WGDASH}/src
 COPY --from=admin-ui /workspace/dist/WGDashboardAdmin/ ${WGDASH}/src/static/dist/WGDashboardAdmin/
+COPY --from=client-ui /workspace/dist/WGDashboardClient/ ${WGDASH}/src/static/dist/WGDashboardClient/
 COPY --from=pip-builder /opt/wgdashboard/src/venv /opt/wgdashboard/src/venv
 COPY ./docker/wg0.conf.template /tmp/wg0.conf.template
 COPY ./docker/wg-dashboard-oidc-providers.json.template /tmp/wg-dashboard-oidc-providers.json.template

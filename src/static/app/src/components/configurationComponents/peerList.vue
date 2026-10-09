@@ -147,14 +147,14 @@ const configurationSummary = computed(() => {
 	return {
 		connectedPeers: configurationPeers.value.filter(x => x.status === "running").length,
 		totalUsage: configurationPeers.value.length > 0 ?
-			configurationPeers.value.filter(x => !x.restricted)
-				.map(x => x.total_data + x.cumu_data).reduce((a, b) => a + b, 0).toFixed(4) : 0,
+			configurationPeers.value
+				.map(x => x.metered_data).reduce((a, b) => a + b, 0).toFixed(4) : 0,
 		totalReceive: configurationPeers.value.length > 0 ?
-			configurationPeers.value.filter(x => !x.restricted)
-				.map(x => x.total_receive + x.cumu_receive).reduce((a, b) => a + b, 0).toFixed(4) : 0,
+			configurationPeers.value
+				.map(x => x.metered_receive).reduce((a, b) => a + b, 0).toFixed(4) : 0,
 		totalSent: configurationPeers.value.length > 0 ?
-			configurationPeers.value.filter(x => !x.restricted)
-				.map(x => x.total_sent + x.cumu_sent).reduce((a, b) => a + b, 0).toFixed(4) : 0
+			configurationPeers.value
+				.map(x => x.metered_sent).reduce((a, b) => a + b, 0).toFixed(4) : 0
 	}
 })
 
@@ -370,7 +370,7 @@ watch(() => route.query.id, (newValue) => {
 				<div class="card-body d-flex">
 					<div>
 						<p class="mb-0 text-muted"><small>
-							<LocaleText t="Total Received"></LocaleText>
+							Upload
 						</small></p>
 						<strong class="h4 text-primary">{{configurationSummary.totalReceive}} GB</strong>
 					</div>
@@ -383,7 +383,7 @@ watch(() => route.query.id, (newValue) => {
 				<div class="card-body d-flex">
 					<div>
 						<p class="mb-0 text-muted"><small>
-							<LocaleText t="Total Sent"></LocaleText>
+							Download
 						</small></p>
 						<strong class="h4 text-success">{{configurationSummary.totalSent}} GB</strong>
 					</div>

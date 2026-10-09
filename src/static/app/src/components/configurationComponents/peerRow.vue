@@ -35,12 +35,12 @@ const emit = defineEmits(['qrcode', 'configurationFile', 'setting', 'jobs', 'ref
 	</td>
 	<td>
 		<small class="text-primary">
-			{{(Peer.cumu_receive + Peer.total_receive).toFixed(4)}} GB
+			{{Peer.metered_receive.toFixed(4)}} GB
 		</small>
 	</td>
 	<td>
 		<small class="text-success">
-			{{(Peer.cumu_sent + Peer.total_sent).toFixed(4)}} GB
+			{{Peer.metered_sent.toFixed(4)}} GB
 		</small>
 	</td>
 	<td>

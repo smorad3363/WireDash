@@ -61,11 +61,11 @@ export default {
 				<div style="font-size: 0.8rem" class="ms-auto d-flex gap-2">
 					<span class="text-primary">
 						<i class="bi bi-arrow-down"></i><strong>
-						{{(Peer.cumu_receive + Peer.total_receive).toFixed(4)}}</strong> GB
+						{{Peer.metered_receive.toFixed(4)}}</strong> GB
 					</span>
 					<span class="text-success">
 						<i class="bi bi-arrow-up"></i><strong>
-						{{(Peer.cumu_sent + Peer.total_sent).toFixed(4)}}</strong> GB
+						{{Peer.metered_sent.toFixed(4)}}</strong> GB
 					</span>
 					<span class="text-secondary" v-if="Peer.latest_handshake !== 'No Handshake'">
 						<i class="bi bi-arrows-angle-contract"></i>

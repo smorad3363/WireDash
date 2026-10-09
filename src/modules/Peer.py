@@ -12,6 +12,7 @@ import sqlalchemy as db
 from .PeerJob import PeerJob
 from  flask import current_app
 from .PeerShareLink import PeerShareLink
+from .PeerLimits import metered_usage
 from .Utilities import GenerateWireguardPublicKey, CheckAddress, ValidateDNSAddress
 
 
@@ -43,10 +44,21 @@ class Peer:
         self.getJobs()
         self.getShareLink()
 
+    def metered_usage(self):
+        weight = self.configuration.AllPeerJobs.weight_for(self.configuration.Name, self.id)
+        return metered_usage(
+            (self.total_receive or 0) + (self.cumu_receive or 0),
+            (self.total_sent or 0) + (self.cumu_sent or 0), weight
+        )
+
     def toJson(self):
-        # self.getJobs()
-        # self.getShareLink()
-        return self.__dict__
+        usage = self.metered_usage()
+        # Keep raw VPN counters intact; serialize billed values separately.
+        # Do not serialize the weight into API/portal logs.
+        return {**self.__dict__,
+                "metered_receive": usage["receive"],
+                "metered_sent": usage["sent"],
+                "metered_data": usage["total"]}
 
     def __repr__(self):
         return str(self.toJson())
@@ -355,7 +367,17 @@ class Peer:
                     self.configuration.peersTransferTable.c.time
                 )
             ).mappings().fetchall()
-        return list(result)
+        # Weight only the returned history; never mutate the transfer database.
+        weight = float(self.configuration.AllPeerJobs.weight_for(self.configuration.Name, self.id))
+        weighted_history = []
+        for item in result:
+            row = dict(item)
+            for key in ("cumu_receive", "total_receive", "cumu_sent", "total_sent"):
+                row[key] = float(row[key] or 0) * weight
+            row["cumu_data"] = row["cumu_receive"] + row["cumu_sent"]
+            row["total_data"] = row["total_receive"] + row["total_sent"]
+            weighted_history.append(row)
+        return weighted_history
             
     
     def getSessions(self, startDate: datetime.datetime = None, endDate: datetime.datetime = None):
