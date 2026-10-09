@@ -147,13 +147,13 @@ const configurationSummary = computed(() => {
 	return {
 		connectedPeers: configurationPeers.value.filter(x => x.status === "running").length,
 		totalUsage: configurationPeers.value.length > 0 ?
-			configurationPeers.value.filter(x => !x.restricted)
+			configurationPeers.value
 				.map(x => x.metered_data).reduce((a, b) => a + b, 0).toFixed(4) : 0,
 		totalReceive: configurationPeers.value.length > 0 ?
-			configurationPeers.value.filter(x => !x.restricted)
+			configurationPeers.value
 				.map(x => x.metered_receive).reduce((a, b) => a + b, 0).toFixed(4) : 0,
 		totalSent: configurationPeers.value.length > 0 ?
-			configurationPeers.value.filter(x => !x.restricted)
+			configurationPeers.value
 				.map(x => x.metered_sent).reduce((a, b) => a + b, 0).toFixed(4) : 0
 	}
 })

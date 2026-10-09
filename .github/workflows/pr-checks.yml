@@ -38,6 +38,8 @@ jobs:
             grep -Rq "Total upload + download" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
             grep -Rq "Traffic weight" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
             grep -Rq "Validity (days" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
+            grep -Rq "Download:" /opt/wgdashboard/src/static/dist/WGDashboardClient/assets
+            grep -Rq "Upload:" /opt/wgdashboard/src/static/dist/WGDashboardClient/assets
           '
       - name: Live HTTP smoke on disposable GitHub runner
         run: |
