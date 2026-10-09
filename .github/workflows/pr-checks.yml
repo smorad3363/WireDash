@@ -35,7 +35,7 @@ jobs:
         run: docker build --file docker/Dockerfile --tag wiredash:pr-check .
       - name: Live sampling and peer reuse unit tests (in container)
         run: |
-          docker run --rm -v "$PWD/tests:/tests:ro" -w /opt/wgdashboard/src \
+          docker run --rm -v "$PWD/tests:/tests:ro" -e PYTHONPATH=/opt/wgdashboard/src -w /opt/wgdashboard/src \
             --entrypoint sh wiredash:pr-check -c \
             '/opt/wgdashboard/src/venv/bin/python3 /tests/test_performance_runtime.py'
       - name: Validate code baked into image
