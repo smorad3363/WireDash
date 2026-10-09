@@ -36,8 +36,10 @@ class PerformanceTests(unittest.TestCase):
 
     def test_ui_trims_config_and_bounds_chart(self):
         data = Path("src/dashboard.py").read_text()
-        self.assertIn('if k != "configuration"', data)
-        self.assertIn('"configurationInfo": WireguardConfigurations[configurationName]', data)
+        read_model = Path("src/modules/ConfigurationReadModel.py").read_text()
+        self.assertIn('if k != "configuration"', read_model)
+        self.assertIn('"configurationInfo": configuration', read_model)
+        self.assertIn('configuration_info_payload(WireguardConfigurations[configurationName])', data)
         ui = Path("src/static/app/src/components/configurationComponents/peerList.vue").read_text()
         self.assertIn("document.hidden", ui)
         graph = Path("src/static/app/src/components/configurationComponents/peerListComponents/peerDataUsageCharts.vue").read_text()
