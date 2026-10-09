@@ -28,7 +28,7 @@ from modules.SystemStatus import SystemStatus
 from modules.PeerShareLinks import PeerShareLinks
 from modules.PeerJobs import PeerJobs
 from modules.PeerLimits import parse_creation_limits
-from modules.ConfigurationReadModel import configuration_info_payload
+from modules.ConfigurationReadModel import configuration_info_payload, ui_configuration_page
 from modules.DashboardConfig import DashboardConfig
 from modules.WireguardConfiguration import WireguardConfiguration
 from modules.AmneziaConfiguration import AmneziaConfiguration
@@ -1082,6 +1082,33 @@ def API_getConfigurationInfo():
     if not configurationName or configurationName not in WireguardConfigurations.keys():
         return ResponseObject(False, "Please provide configuration name")
     return ResponseObject(data=configuration_info_payload(WireguardConfigurations[configurationName]))
+
+@app.get(f'{APP_PREFIX}/api/ui/getWireguardConfigurationPage')
+def API_UI_getConfigurationPage():
+    """UI-only endpoint; do not alter /api/getWireguardConfigurationInfo for bots."""
+    name = request.args.get("configurationName")
+    if not name or name not in WireguardConfigurations:
+        return ResponseObject(False, "Please provide configuration name")
+    try:
+        page = int(request.args.get("page", 1))
+        per_page = int(request.args.get("perPage", 50))
+    except (TypeError, ValueError):
+        return ResponseObject(False, "Invalid page parameters")
+    if page < 1 or not 1 <= per_page <= 100:
+        return ResponseObject(False, "Page size must be between 1 and 100")
+    sort = request.args.get("sort", "name")
+    if sort not in ("name", "status", "allowed_ip", "restricted"):
+        return ResponseObject(False, "Invalid sort")
+    hidden = request.args.get("hiddenTags", "")
+    # Keep payloads bounded to prevent pathological URLs and filter work.
+    if len(hidden) > 2000:
+        return ResponseObject(False, "Too many hidden tags")
+    return ResponseObject(data=ui_configuration_page(
+        WireguardConfigurations[name], page, per_page,
+        request.args.get("search", "")[:256], sort,
+        frozenset(hidden.split(",")) if hidden else frozenset(),
+        request.args.get("showAllWhenHidden", "true").lower() == "true",
+    ))
 
 @app.get(f'{APP_PREFIX}/api/getPeerHistoricalEndpoints')
 def API_GetPeerHistoricalEndpoints():
