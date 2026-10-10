@@ -43,7 +43,7 @@ class RestoreAndCompaction(unittest.TestCase):
             out = base / "backup"
             (inp / "db").mkdir(parents=True)
             out.mkdir()
-            (inp / "wg-dashboard.ini").write_text("[Database]\\ntype=sqlite\\n")
+            (inp / "wg-dashboard.ini").write_text("[Database]\ntype=sqlite\n")
             db = inp / "db" / "peers.db"
             conn = sqlite3.connect(str(db))
             try:
@@ -62,7 +62,7 @@ class RestoreAndCompaction(unittest.TestCase):
             finally:
                 conn.close()
             script = Path("deploy/wgdashbackup.sh").read_text()
-            code = script.split("online_sqlite() {", 1)[1].split("<<'PY'\\n", 1)[1].split("\\nPY\\n", 1)[0]
+            code = script.split("online_sqlite() {", 1)[1].split("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
             proc = subprocess.run(
                 [sys.executable, "-", str(inp), str(out)],
                 input=code, text=True, capture_output=True, timeout=40)
@@ -92,7 +92,7 @@ class RestoreAndCompaction(unittest.TestCase):
         agent = Path("deploy/wgdashbackup-panel-agent.py").read_text()
         self.assertIn('"restoreProgress": read_progress()', agent)
         self.assertIn('"--restore-approved", str(path), digest, job_id', agent)
-        self.assertIn("previous[\\"state\\"] in (\\"queued\\", \\"running\\")", agent)
+        self.assertIn('previous["state"] in ("queued", "running")', agent)
         installer = Path("install.sh").read_text()
         self.assertIn("wgdashbackup_progress.py", installer)
         self.assertIn('"/api/getWireguardConfigurationInfo"', Path("src/static/app/src/components/configurationComponents/peerList.vue").read_text())
