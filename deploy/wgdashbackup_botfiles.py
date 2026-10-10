@@ -207,7 +207,8 @@ def send_archive(name, folder):
                 "chat_id": chat,
                 "caption": captions[0],
                 "reply_parameters": json.dumps({"message_id": header_id}),
-            }, attachments=[batch[0]])
+                "document": "@"+str(batch[0])+";filename="+batch[0].name,
+            })
             messages = [item]
         else:
             media = [
@@ -267,7 +268,9 @@ def _json_request(url, payload, timeout=40):
 def _download(token, file_id, target, expected_bytes, update):
     result = _json_request("https://api.telegram.org/bot" + token + "/getFile",
                            {"file_id": file_id})
-    if not isinstance(result, dict) or result.get("file_size") != expected_bytes:
+    if not isinstance(result, dict) or (
+            result.get("file_size") is not None and
+            result.get("file_size") != expected_bytes):
         raise ValueError("Telegram file size changed")
     filepath = result.get("file_path", "")
     if (not isinstance(filepath, str) or len(filepath) > 240

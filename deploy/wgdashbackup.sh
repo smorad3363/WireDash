@@ -357,8 +357,10 @@ backup() {
 
   size=$(stat -c%s "$archive")
   log "Compressed backup size: $size bytes (gzip -9, compatible tar.gz)"
-  if (( size > 45000000 )); then
-    split -b 45000000 -d -a 4 "$archive" "$tmp/$name.part-"
+  # Cloud Telegram Bot API getFile has a 20 MB cap. New 18 MB parts
+  # remain downloadable directly with the same bot, no Telegram user login.
+  if (( size > 18000000 )); then
+    split -b 18000000 -d -a 4 "$archive" "$tmp/$name.part-"
     shopt -s nullglob
     parts=("$tmp/$name.part-"*)
     shopt -u nullglob
@@ -367,13 +369,10 @@ backup() {
   fi
   total=${#parts[@]}; i=0
   log "Archive: $name; size: $size bytes; SHA256: $sha; Telegram parts: $total"
-  for part in "${parts[@]}"; do
-    i=$((i+1)); response=$tmp/telegram.json
-    telegram_call sendDocument "$response" \
-      -F "chat_id=$CHAT" -F "document=@$part" \
-      -F "caption=WGDashboard $name | PART $i/$total | SHA256 $sha"
-    log "Telegram upload accepted: part $i/$total"
-  done
+  # Group document parts into albums and retain returned file IDs in a
+  # root-only bot catalog. Do not report success if any document was rejected.
+  python3 /usr/local/libexec/wgdashbackup_botfiles.py send "$name" "$tmp"
+  log "Telegram accepted all $total part(s); catalog saved for login-free recovery."
   touch "$OUT/$name.sent"
   chmod 600 "$OUT/$name.sent"
   printf '%s | %s | %s | %s parts\n' "$(date -u +%FT%TZ)" "$name" "$sha" "$total" > "$CFG_DIR/last-success"
