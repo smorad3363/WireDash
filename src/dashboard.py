@@ -361,6 +361,67 @@ def _backup_ui_authorized():
             and DashboardConfig.APIAccessed is False)
 
 
+@app.post(f'{APP_PREFIX}/api/ui/systemBackup/import')
+def API_UI_SystemBackupImport():
+    """Browser-only import of one archive or multiple Telegram parts.
+
+    Only a dedicated staging directory is writable inside this container.
+    The host verifier copies, validates, hashes, and promotes the backup.
+    """
+    if not _backup_ui_authorized():
+        return ResponseObject(False, "Admin browser session required")
+    from pathlib import Path
+    import shutil
+    import uuid
+    origin = request.headers.get("Origin", "")
+    parsed = urlsplit(origin)
+    if (parsed.scheme not in ("https", "http")
+            or parsed.netloc != request.host
+            or request.headers.get("Sec-Fetch-Site", "same-origin")
+            not in ("same-origin", "none")):
+        return ResponseObject(False, "Same-origin browser request required")
+    max_bytes = 900 * 1024 * 1024
+    if not request.content_length or request.content_length > max_bytes + 1048576:
+        return ResponseObject(False, "Import request exceeds 900 MiB")
+    files = request.files.getlist("files")
+    if not 1 <= len(files) <= 32:
+        return ResponseObject(False, "Select 1 to 32 backup files")
+    import re
+    valid = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,180}\.tar\.gz(?:\.part-[0-9]{3,4})?$")
+    names = [item.filename for item in files]
+    if (len(set(names)) != len(names) or
+            not all(isinstance(name, str) and valid.fullmatch(name) for name in names)):
+        return ResponseObject(False, "Duplicate or unsupported backup filenames")
+    base = Path("/var/lib/wgdashbackup-import")
+    if not base.is_dir() or base.is_symlink():
+        return ResponseObject(False, "Host backup import staging unavailable")
+    upload_id = uuid.uuid4().hex
+    location = base / upload_id
+    try:
+        location.mkdir(mode=0o700)
+        total = 0
+        for entry in files:
+            with (location / entry.filename).open("xb") as out:
+                while True:
+                    block = entry.stream.read(1024 * 1024)
+                    if not block:
+                        break
+                    total += len(block)
+                    if total > max_bytes:
+                        raise ValueError("Uploaded backups exceed 900 MiB")
+                    out.write(block)
+        response = backup_panel_call("import_upload", uploadId=upload_id)
+        if response["ok"]:
+            return ResponseObject(data=response["data"])
+        return ResponseObject(False, response.get("message", "Backup import failed"))
+    except (OSError, ValueError) as exc:
+        return ResponseObject(False, str(exc)[:200])
+    finally:
+        # The host helper normally deletes the stage after importing. The
+        # web process also cleans it if upload or helper startup fails.
+        shutil.rmtree(location, ignore_errors=True)
+
+
 @app.get(f'{APP_PREFIX}/api/ui/systemBackup')
 def API_UI_SystemBackupStatus():
     if not _backup_ui_authorized():
@@ -389,7 +450,7 @@ def API_UI_SystemBackupAction():
         return ResponseObject(False, "Invalid JSON request", status_code=400)
     operation = data.get("operation")
     allowed = ("set_interval", "enable", "disable", "set_telegram",
-               "backup_now", "verify", "restore")
+               "backup_now", "verify", "restore", "import_root")
     if operation not in allowed:
         return ResponseObject(False, "Unsupported backup operation", status_code=400)
     fields = {}
@@ -398,7 +459,7 @@ def API_UI_SystemBackupAction():
     elif operation == "set_telegram":
         fields["token"] = data.get("token")
         fields["chat"] = data.get("chat")
-    elif operation in ("verify", "restore"):
+    elif operation in ("verify", "restore", "import_root"):
         fields["name"] = data.get("name")
     if operation == "restore":
         # A destructive restore is deliberately NOT authorized by an API key or
