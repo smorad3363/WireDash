@@ -30,7 +30,7 @@ LIMIT_BYTES = 900 * 1024 * 1024
 # instead of incorrectly rejecting any individual file above 512 MiB.
 LIMIT_EXTRACT_BYTES = 12 * 1024 * 1024 * 1024
 MIN_FREE_DISK_RESERVE = 1024 * 1024 * 1024
-MAX_FILES = 32
+MAX_FILES = 64
 MAX_TAR_MEMBERS = 25000
 
 
