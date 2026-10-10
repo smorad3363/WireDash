@@ -366,8 +366,7 @@ def API_UI_SystemBackupStatus():
     if not _backup_ui_authorized():
         return ResponseObject(False, "Admin browser session required", status_code=403)
     result = backup_panel_call("status")
-    return ResponseObject(result["ok"], result.get("message"), result.get("data"),
-                          200 if result["ok"] else 503)
+    return ResponseObject(result["ok"], result.get("message"), result.get("data"))
 
 
 @app.post(f'{APP_PREFIX}/api/ui/systemBackup')
@@ -428,8 +427,7 @@ def API_UI_SystemBackupAction():
             return ResponseObject(False, "Type RESTORE and the selected filename exactly", status_code=400)
         fields["confirmation"] = data.get("confirmation")
     result = backup_panel_call(operation, **fields)
-    return ResponseObject(result["ok"], result.get("message"), result.get("data"),
-                          200 if result["ok"] else 400)
+    return ResponseObject(result["ok"], result.get("message"), result.get("data"))
 
 
 @app.get(f'{APP_PREFIX}/api/getWireguardConfigurations')
