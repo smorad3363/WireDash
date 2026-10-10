@@ -17,6 +17,7 @@ import hashlib
 import wgdashbackup_import as importer
 from wgdashbackup_progress import read_progress, write_progress
 import wgdashbackup_telegram as telegram
+import wgdashbackup_botfiles as botfiles
 
 SOCKET_DIR = Path("/run/wgdashbackup-panel")
 SOCKET = SOCKET_DIR / "control.sock"
@@ -100,6 +101,7 @@ def status():
             "restoreProgress": read_progress(),
             "telegramDownloadConfigured": telegram.configured(),
             "telegramDownload": telegram.current_job(),
+            "botBackups": botfiles.available(),
         }
     except OSError:
         raise ValueError("Unable to read backup status") from None
@@ -134,6 +136,30 @@ def call(operation, payload):
     if operation == "import_upload":
         imported = importer.import_upload(payload.get("uploadId"), execute)
         return {"imported": imported, "status": status()}
+    if operation == "download_bot_backup":
+        name = payload.get("name")
+        botfiles.load(name)  # only root-recorded, schema-validated file IDs
+        botfiles.credentials()
+        prior = telegram.current_job()
+        if prior and prior["state"] in ("queued", "running"):
+            raise ValueError("Another Telegram download is already in progress")
+        job_id = uuid.uuid4().hex[:12]
+        telegram.RUN.mkdir(mode=0o700, parents=True, exist_ok=True)
+        req = telegram.RUN / ("telegram-job-" + job_id + ".json")
+        req.write_text(json.dumps({"jobId": job_id, "name": name}))
+        req.chmod(0o600)
+        telegram.write_job(job_id, "queued", "queued", 0)
+        if not execute([
+            "systemd-run", "--collect", "--no-block",
+            "--unit=wiredash-telegram-download-" + job_id,
+            "/usr/bin/python3", "/usr/local/libexec/wgdashbackup_botfiles.py",
+            "download", job_id,
+        ], timeout=20):
+            req.unlink(missing_ok=True)
+            telegram.write_job(job_id, "failed", "failed", 0,
+                               error="Unable to schedule Bot API download")
+            raise ValueError("Unable to start Telegram bot downloader")
+        return {"queued": True, "job": telegram.current_job()}
     if operation == "download_telegram":
         link = payload.get("link")
         telegram.parse_link(link)  # strict local-only Telegram URL parser

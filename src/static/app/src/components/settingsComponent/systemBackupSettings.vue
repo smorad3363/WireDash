@@ -13,6 +13,12 @@ const chat = ref("")
 const telegramLink = ref("")
 const telegramDownload = ref(null)
 const telegramDownloadAvailable = ref(false)
+const botBackups = ref([])
+const downloadBotBackup = async (name) => {
+  if (busy.value) return
+  await execute("download_bot_backup", {name}, "Bot backup queued for direct VPS download")
+  await pollTelegram()
+}
 const telegramPhases = {
   queued: "Queued on the server",
   downloading: "Downloading Telegram backup parts",
@@ -33,6 +39,7 @@ const pollTelegram = async () => {
     const body = await response.json()
     if (body?.status && body.data) {
       telegramDownload.value = body.data.telegramDownload
+      botBackups.value = body.data.botBackups || []
       telegramDownloadAvailable.value = body.data.telegramDownloadConfigured
       status.value = body.data
     }
@@ -140,6 +147,7 @@ const refresh = async () => {
       status.value = res.data
       telegramDownload.value = res.data.telegramDownload
       telegramDownloadAvailable.value = res.data.telegramDownloadConfigured
+      botBackups.value = res.data.botBackups || []
       restoreProgress.value = res.data.restoreProgress
       interval.value = res.data.intervalMinutes
       messageError.value = false
@@ -161,12 +169,14 @@ const execute = async (operation, fields = {}, text = "Updated") => {
         status.value = res.data
         telegramDownload.value = res.data.telegramDownload
         telegramDownloadAvailable.value = res.data.telegramDownloadConfigured
+        botBackups.value = res.data.botBackups || []
         restoreProgress.value = res.data.restoreProgress
         interval.value = res.data.intervalMinutes
       } else if (res.data?.status?.archives) {
         status.value = res.data.status
         telegramDownload.value = res.data.status.telegramDownload
         telegramDownloadAvailable.value = res.data.status.telegramDownloadConfigured
+        botBackups.value = res.data.status.botBackups || []
         restoreProgress.value = res.data.status.restoreProgress
         interval.value = res.data.status.intervalMinutes
       }
@@ -277,8 +287,34 @@ onUnmounted(() => {
           <small class="text-muted">Send /start to your bot before saving. Credentials are stored on the server only.</small>
         </div>
         <div class="border rounded-3 p-3 d-flex flex-column gap-2">
+          <h6 class="mb-0">Bot backup library — no Telegram login</h6>
+          <p class="small text-muted mb-0">
+            New automatic backups are grouped into Telegram document albums with a header.
+            The bot records each 18 MB file ID when sending, so you can restore a copy
+            directly to this VPS by clicking Download. No Telegram account login,
+            copied links or browser uploads are needed. Older 45 MB backups are not
+            listed unless their file IDs were recorded.
+          </p>
+          <div v-if="!botBackups.length" class="small text-muted">
+            No cataloged bot backups yet. New backups will appear automatically after successful delivery.
+          </div>
+          <div v-for="item in botBackups" :key="item.name"
+               class="d-flex flex-wrap align-items-center gap-2 py-2 border-bottom small">
+            <div class="flex-grow-1">
+              <strong>{{item.name}}</strong>
+              <div class="text-muted">{{fileSize(item.bytes)}} · {{item.parts}} Telegram parts · {{displayDate(item.created)}}</div>
+            </div>
+            <button class="btn btn-sm btn-outline-primary" type="button"
+                    :disabled="busy || ['queued', 'running'].includes(telegramDownload?.state)"
+                    @click="downloadBotBackup(item.name)">Download & verify on VPS</button>
+          </div>
+        </div>
+        <div class="border rounded-3 p-3 d-flex flex-column gap-2">
           <h6 class="mb-0">Download a backup directly from Telegram</h6>
           <p class="small text-muted mb-0">
+            For historical 45 MB parts without a bot file catalog, this alternative
+            uses an authorized Telegram account. For new backups use the
+            <strong>Bot backup library</strong> above with no login.
             One-time VPS setup: <code>sudo wireback --telegram-login</code>.
             Connect a Telegram USER account with access to the bot's private chat or backup channel.
             Then paste the message link of <strong>PART 1</strong>; the VPS finds and downloads the

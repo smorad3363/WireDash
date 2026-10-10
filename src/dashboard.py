@@ -450,7 +450,8 @@ def API_UI_SystemBackupAction():
         return ResponseObject(False, "Invalid JSON request", status_code=400)
     operation = data.get("operation")
     allowed = ("set_interval", "enable", "disable", "set_telegram",
-               "backup_now", "verify", "restore", "import_root", "download_telegram")
+               "backup_now", "verify", "restore", "import_root", "download_telegram",
+               "download_bot_backup")
     if operation not in allowed:
         return ResponseObject(False, "Unsupported backup operation", status_code=400)
     fields = {}
@@ -461,7 +462,7 @@ def API_UI_SystemBackupAction():
     elif operation == "set_telegram":
         fields["token"] = data.get("token")
         fields["chat"] = data.get("chat")
-    elif operation in ("verify", "restore", "import_root"):
+    elif operation in ("verify", "restore", "import_root", "download_bot_backup"):
         fields["name"] = data.get("name")
     if operation == "restore":
         # A destructive restore is deliberately NOT authorized by an API key or
