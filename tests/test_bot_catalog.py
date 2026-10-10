@@ -64,6 +64,25 @@ class BotCatalogTests(unittest.TestCase):
         self.assertEqual([x[0] for x in calls],["sendMessage","sendMediaGroup","sendMessage"])
         self.assertEqual((bot.CATALOG/(NAME+".json")).stat().st_mode&0o777,0o600)
 
+    def test_small_backup_single_document_keeps_download_catalog(self):
+        path=self.root/"stage"/NAME
+        path.write_bytes(b"small-backup")
+        with patch.object(importer,"ARCHIVES",self.root/"stage"), \
+             patch.object(bot,"credentials",return_value=("123:abc","@test")):
+            def fake_api(token,method,fields,attachments=()):
+                if method=="sendMessage":
+                    return {"message_id":123}
+                if method=="sendDocument":
+                    self.assertIn("document",fields)
+                    self.assertIn(str(path),fields["document"])
+                    return {"document":{"file_id":"AAAA123456bot",
+                                        "file_size":path.stat().st_size}}
+                raise AssertionError(method)
+            with patch.object(bot,"_bot_call",side_effect=fake_api):
+                data=bot.send_archive(NAME,self.root/"download")
+        self.assertEqual(len(data["files"]),1)
+        self.assertEqual(data["files"][0]["name"],NAME)
+
     def test_telegram_group_validation_and_no_arbitrary_ids_from_browser(self):
         name=NAME
         payload={"name":name,"bytes":10,"sha256":"a"*64,

@@ -167,6 +167,9 @@ def send_archive(name, folder):
     source = folder / name
     parts = sorted(folder.glob(name + ".part-*"))
     if not parts:
+        # Small (<=18MB) snapshots are kept in the persistent output folder,
+        # not inside the working/split-part directory.
+        source = importer.ARCHIVES / name
         parts = [source]
     if not 1 <= len(parts) <= MAX_PARTS:
         raise ValueError("Telegram backup exceeds permitted part count")
