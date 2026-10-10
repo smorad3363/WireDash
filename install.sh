@@ -113,12 +113,13 @@ fi
 ((EUID == 0)) || die 'must run as root (sudo)'
 if ((UNINSTALL)); then
   step 1 'uninstall helper units only (keep VPN, volumes, backups, containers)'
-  for unit in wgd-watchdog.service wgdashbackup.timer wgdashbackup-health.timer; do
+  for unit in wgd-watchdog.service wgdashbackup.timer wgdashbackup-health.timer wgdashbackup-panel.service; do
     systemctl disable --now "$unit" 2>/dev/null || :
   done
   rm -f /etc/systemd/system/wgd-watchdog.service \
     /etc/systemd/system/wgdashbackup.service /etc/systemd/system/wgdashbackup.timer \
-    /etc/systemd/system/wgdashbackup-health.service /etc/systemd/system/wgdashbackup-health.timer
+    /etc/systemd/system/wgdashbackup-health.service /etc/systemd/system/wgdashbackup-health.timer \
+    /etc/systemd/system/wgdashbackup-panel.service
   systemctl daemon-reload
   log 'Uninstalled helper units. VPN, container, config, archives and binaries preserved.'
   exit 0
@@ -205,6 +206,8 @@ fetch() {
 }
 fetch deploy/compose.yaml "$STAGE/compose.yaml"
 fetch deploy/wgdashbackup.sh "$STAGE/wgdashbackup.sh"
+fetch deploy/wgdashbackup-panel-agent.py "$STAGE/wgdashbackup-panel-agent.py"
+fetch deploy/wgdashbackup-panel.service "$STAGE/wgdashbackup-panel.service"
 fetch deploy/wgd-watchdog.sh "$STAGE/wgd-watchdog.sh"
 fetch deploy/wgd-watchdog.service "$STAGE/wgd-watchdog.service"
 fetch tests/check_patch.py "$STAGE/check_patch.py"
@@ -262,6 +265,20 @@ elif ! exists; then
 else
   log 'already done: compose retained'
 fi
+# Mount a restricted Unix control socket into the panel, never the Docker
+# socket or any host backup directory. Existing Compose layouts are preserved.
+install -d -m 0700 /run/wgdashbackup-panel
+python3 - "$COMPOSE" <<'PY'
+import pathlib,sys
+p=pathlib.Path(sys.argv[1]); s=p.read_text()
+mount="      - /run/wgdashbackup-panel:/run/wgdashbackup-panel:ro"
+if mount not in s:
+    anchor="      - data:/data"
+    if s.count(anchor)!=1:
+        raise SystemExit("Cannot safely locate wgdashboard data mount for backup agent")
+    s=s.replace(anchor,anchor+"\n"+mount)
+    p.write_text(s)
+PY
 # Capture a checked local snapshot before changing an existing running deployment.
 snapshot() {
   local target=$1
@@ -372,6 +389,19 @@ if ((MIGRATE)) && [[ ! -f "$DEST/.env" ]]; then
 fi
 if ((SKIP_BACKUP==0)); then
   bash "$STAGE/wgdashbackup.sh" --install
+  install -d -m 0700 /usr/local/libexec
+  agent_changed=0
+  if ! cmp -s "$STAGE/wgdashbackup-panel-agent.py" /usr/local/libexec/wgdashbackup-panel-agent.py ||
+     ! cmp -s "$STAGE/wgdashbackup-panel.service" /etc/systemd/system/wgdashbackup-panel.service; then
+    agent_changed=1
+  fi
+  install -m 0700 "$STAGE/wgdashbackup-panel-agent.py" /usr/local/libexec/wgdashbackup-panel-agent.py
+  install -m 0644 "$STAGE/wgdashbackup-panel.service" /etc/systemd/system/wgdashbackup-panel.service
+  systemctl daemon-reload
+  systemctl enable --now wgdashbackup-panel.service
+  if ((agent_changed)); then systemctl restart wgdashbackup-panel.service; fi
+  systemctl is-active --quiet wgdashbackup-panel.service ||
+    die 'Host backup control service failed to start; inspect journalctl -u wgdashbackup-panel'
 else log 'backup skipped by request'; fi
 step 8 'install HTTP watchdog'
 if ((SKIP_WATCHDOG==0)); then
@@ -401,5 +431,5 @@ if ((SKIP_WATCHDOG==0)); then
 else log 'watchdog skipped by request'; fi
 step 9 'summary'
 log "WireDash $VERSION installed/updated; panel: http://SERVER_IP:$PORT"
-log 'Backup and watchdog never stop the container. Configure Telegram: sudo wireback (option 1)'
+log 'Backup settings are now available in the admin panel. Telegram remains configurable via sudo wireback.'
 log 'Watchdog logs: journalctl -u wgd-watchdog -f'

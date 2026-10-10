@@ -13,6 +13,8 @@ services:
       - aconf:/etc/amnezia/amneziawg
       - conf:/etc/wireguard
       - data:/data
+      # Restricted host backup command socket. No Docker/host-root mounts.
+      - /run/wgdashbackup-panel:/run/wgdashbackup-panel:ro
     cap_add:
       - NET_ADMIN
     healthcheck:
