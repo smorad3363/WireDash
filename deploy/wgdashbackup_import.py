@@ -201,8 +201,18 @@ def import_upload(upload_id, execute):
         if len(files) > MAX_FILES or sum(p.stat().st_size for p in files) > LIMIT_BYTES:
             raise ValueError("Upload exceeds allowed limits")
         imported = []
-        for group in groups:
-            imported.append(import_backup(directory, group["name"], execute))
+        try:
+            for group in groups:
+                imported.append(import_backup(directory, group["name"], execute))
+        except Exception:
+            # Multi-upload is all-or-nothing. Remove copies promoted earlier in
+            # this batch if a later archive fails validation.
+            for item in imported:
+                target = ARCHIVES / item["name"]
+                for path in (target, Path(str(target) + ".sha256"),
+                             Path(str(target) + ".imported")):
+                    path.unlink(missing_ok=True)
+            raise
         return imported
     finally:
         # These bytes are sensitive. Remove the upload staging directory even
