@@ -341,7 +341,10 @@ fi
 # Mount a restricted Unix control socket into the panel, never the Docker
 # socket or any host backup directory. Existing Compose layouts are preserved.
 install -d -m 0700 /run/wgdashbackup-panel
-python3 - "$COMPOSE" <<'PY'
+python3 - "$COMPOSE" <<'PY' || {
+  [[ -z "$old_compose" ]] || cp -a "$old_compose" "$COMPOSE"
+  die 'Cannot add restricted backup socket mount; original Compose restored'
+}
 import pathlib,re,sys
 p=pathlib.Path(sys.argv[1]); s=p.read_text()
 mount="      - /run/wgdashbackup-panel:/run/wgdashbackup-panel:ro"
