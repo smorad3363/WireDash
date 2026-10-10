@@ -11,6 +11,7 @@ import AccountSettingsMFA from "@/components/settingsComponent/accountSettingsMF
 import AccountSettingsInputUsername from "@/components/settingsComponent/accountSettingsInputUsername.vue";
 import DashboardEmailSettings from "@/components/settingsComponent/dashboardEmailSettings.vue";
 import DashboardWebHooks from "@/components/settingsComponent/dashboardWebHooks.vue";
+import SystemBackupSettings from "@/components/settingsComponent/systemBackupSettings.vue";
 
 const dashboardConfigurationStore = DashboardConfigurationStore()
 
@@ -78,6 +79,7 @@ const dashboardConfigurationStore = DashboardConfigurationStore()
 
 		<DashboardAPIKeys></DashboardAPIKeys>
 		<DashboardEmailSettings></DashboardEmailSettings>
+        <SystemBackupSettings></SystemBackupSettings>
 	</div>
 </template>
 

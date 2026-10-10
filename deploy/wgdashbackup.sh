@@ -172,6 +172,61 @@ configure() {
   echo 'Starting the first backup now...'
   "$BIN" --backup
 }
+
+# Restricted, non-interactive entrypoints for the host-only panel helper.
+configure_stdin() {
+  local token chat temp response
+  IFS= read -r token || { fail 'Missing Telegram token.'; return 1; }
+  IFS= read -r chat || { fail 'Missing Chat ID.'; return 1; }
+  [[ "$token" =~ ^[0-9]+:[A-Za-z0-9_-]+$ && ${#token} -le 200 ]] ||
+    { fail 'Invalid token format.'; return 1; }
+  [[ "$chat" =~ ^-?[0-9]+$ || "$chat" =~ ^@[A-Za-z0-9_]+$ ]] ||
+    { fail 'Invalid Chat ID.'; return 1; }
+  TOKEN=$token CHAT=$chat
+  temp=$(mktemp "$CFG_DIR/.telegram.XXXXXXXX")
+  response=$(mktemp "$CFG_DIR/.telegram-test.XXXXXXXX")
+  chmod 600 "$temp" "$response"
+  if ! telegram_call getMe "$response" ||
+     ! telegram_call sendMessage "$response" -F "chat_id=$CHAT" \
+       -F 'text=WireDash: Telegram backup destination verified'; then
+    rm -f -- "$temp" "$response"
+    unset TOKEN CHAT token chat
+    fail 'Telegram verification failed; previous settings preserved.'
+    return 1
+  fi
+  rm -f -- "$response"
+  printf 'TOKEN=%q\nCHAT=%q\n' "$token" "$chat" > "$temp"
+  mv -f -- "$temp" "$CFG"
+  chmod 600 "$CFG"
+  unset TOKEN CHAT token chat
+  install_timer
+  systemctl enable --now "$UNIT.timer" "$HEALTH_UNIT.timer" >/dev/null
+  log 'Telegram backup destination updated and schedule enabled.'
+  systemctl start --no-block "$UNIT.service"
+}
+set_interval_noninteractive() {
+  local minutes=$1
+  [[ "$minutes" =~ ^[0-9]+$ ]] && (( minutes >= 5 && minutes <= 1440 )) ||
+    { fail 'Backup interval must be 5..1440 minutes.'; return 1; }
+  printf '%s\n' "$minutes" > "$SCHEDULE"
+  chmod 600 "$SCHEDULE"
+  install_timer
+  if systemctl is-enabled --quiet "$UNIT.timer"; then
+    systemctl restart "$UNIT.timer"
+  fi
+  log "Backup schedule set to $minutes minutes."
+}
+enable_schedule() {
+  [[ -s "$CFG" ]] || { fail 'Configure Telegram first.'; return 1; }
+  install_timer
+  systemctl enable --now "$UNIT.timer" "$HEALTH_UNIT.timer" >/dev/null
+  log 'Scheduled backups enabled.'
+}
+disable_schedule() {
+  systemctl disable --now "$UNIT.timer" "$HEALTH_UNIT.timer" >/dev/null
+  log 'Scheduled backups disabled; VPN untouched.'
+}
+
 mount_sources() {
   local -a paths
   mapfile -t paths < <(docker inspect "$CONTAINER" | python3 -c '
@@ -390,7 +445,9 @@ PY
   rm -rf -- "$tmp"
 }
 restore() {
-  local f=$1 expected=${2:-} tmp pre reply
+  local f=$1 expected=${2:-} mode=${3:-interactive} tmp pre reply
+  exec 7>/run/wgdashbackup-restore.lock
+  flock -n 7 || { fail 'A full restore is already in progress.'; return 1; }
   need_install; ensure_dirs; mount_sources
   tmp=$(mktemp -d "$OUT/.restore.XXXXXXXX")
   resolve_archive "$f" "$tmp"
@@ -401,8 +458,10 @@ restore() {
   echo 'WARNING: Restore STOPS WGDashboard/VPN and REPLACES current volume data.'
   echo 'Before this step, install the same Docker Compose deployment on the new VPS and copy the backup to /root.'
   echo 'This is ONLY for recovery, never for regular backup.'
-  read -r -p 'Type RESTORE to continue: ' reply </dev/tty
-  if [[ "$reply" != RESTORE ]]; then rm -rf -- "$tmp"; log 'Restore cancelled.'; return 0; fi
+  if [[ "$mode" != approved ]]; then
+    read -r -p 'Type RESTORE to continue: ' reply </dev/tty
+    if [[ "$reply" != RESTORE ]]; then rm -rf -- "$tmp"; log 'Restore cancelled.'; return 0; fi
+  fi
   cd /opt/wgdashboard
   docker compose -f "$COMPOSE" stop wgdashboard
   mkdir -p "$tmp/previous/data" "$tmp/previous/etc/wireguard" "$tmp/previous/etc/amnezia/amneziawg"
@@ -581,9 +640,23 @@ main() {
       echo 'Ready. Run: sudo wireback'
       ;;
     --backup) trap 'backup_failed "$?"' ERR; backup; trap - ERR ;;
+    --configure-stdin) configure_stdin ;;
+    --set-interval) [[ -n "${2:-}" ]] || { echo 'Missing interval' >&2; exit 2; }; set_interval_noninteractive "$2" ;;
+    --enable) enable_schedule ;;
+    --disable) disable_schedule ;;
     --health) health ;;
     --verify) [[ -n "${2:-}" ]] || { echo 'Usage: wgdashbackup --verify FILE [SHA256]'; exit 2; }; verify_backup "$2" "${3:-}" ;;
     --restore) [[ -n "${2:-}" ]] || { echo 'Usage: wgdashbackup --restore FILE [SHA256]'; exit 2; }; restore "$2" "${3:-}" ;;
+    --restore-approved)
+      [[ -n "${2:-}" ]] || { echo 'Missing approved archive' >&2; exit 2; }
+      watchdog_active=0
+      if systemctl is-active --quiet wgd-watchdog.service; then
+        watchdog_active=1
+        systemctl stop wgd-watchdog.service
+      fi
+      trap 'if (( watchdog_active )); then systemctl start wgd-watchdog.service || :; fi' EXIT
+      restore "$2" "${3:-}" approved
+      ;;
     --status) status ;;
     --help|-h) echo 'Usage: sudo wireback [--install | --backup | --health | --verify FILE [SHA256] | --restore FILE [SHA256] | --status] (also: wgdashbackup)' ;;
     '')

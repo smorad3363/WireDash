@@ -1,0 +1,17 @@
+[Unit]
+Description=WireDash restricted host backup control socket
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+UMask=0077
+ExecStart=/usr/bin/python3 /usr/local/libexec/wgdashbackup-panel-agent.py
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

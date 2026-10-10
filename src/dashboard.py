@@ -28,6 +28,8 @@ from modules.SystemStatus import SystemStatus
 from modules.PeerShareLinks import PeerShareLinks
 from modules.PeerJobs import PeerJobs
 from modules.PeerLimits import parse_creation_limits
+from modules.BackupPanelBridge import backup_panel_call
+from urllib.parse import urlsplit
 from modules.ConfigurationReadModel import configuration_info_payload, ui_configuration_page
 from modules.DashboardConfig import DashboardConfig
 from modules.WireguardConfiguration import WireguardConfiguration
@@ -347,6 +349,86 @@ def API_SignOut():
     resp.delete_cookie("authToken")
     session.clear()
     return resp
+
+# Full-system backup settings are intentionally separate from the existing
+# per-configuration backup API. Never expose these host-root operations through
+# bot API keys or unauthenticated installations.
+def _backup_ui_authorized():
+    return (DashboardConfig.GetConfig("Server", "auth_req")[1] is True
+            and session.get("role") == "admin"
+            and bool(session.get("username"))
+            and session.get("username") == request.cookies.get("authToken")
+            and DashboardConfig.APIAccessed is False)
+
+
+@app.get(f'{APP_PREFIX}/api/ui/systemBackup')
+def API_UI_SystemBackupStatus():
+    if not _backup_ui_authorized():
+        return ResponseObject(False, "Admin browser session required", status_code=403)
+    result = backup_panel_call("status")
+    return ResponseObject(result["ok"], result.get("message"), result.get("data"))
+
+
+@app.post(f'{APP_PREFIX}/api/ui/systemBackup')
+def API_UI_SystemBackupAction():
+    if not _backup_ui_authorized():
+        return ResponseObject(False, "Admin browser session required", status_code=403)
+    # Reject cross-origin writes even if a browser includes its session cookie.
+    origin = request.headers.get("Origin", "")
+    parsed = urlsplit(origin)
+    if (parsed.scheme not in ("https", "http")
+            or parsed.netloc != request.host
+            or request.headers.get("Sec-Fetch-Site", "same-origin")
+            not in ("same-origin", "none")):
+        return ResponseObject(False, "Same-origin browser request required", status_code=403)
+    if (not request.is_json or request.content_length is not None
+            and request.content_length > 4096):
+        return ResponseObject(False, "Invalid JSON request", status_code=400)
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return ResponseObject(False, "Invalid JSON request", status_code=400)
+    operation = data.get("operation")
+    allowed = ("set_interval", "enable", "disable", "set_telegram",
+               "backup_now", "verify", "restore")
+    if operation not in allowed:
+        return ResponseObject(False, "Unsupported backup operation", status_code=400)
+    fields = {}
+    if operation == "set_interval":
+        fields["minutes"] = data.get("minutes")
+    elif operation == "set_telegram":
+        fields["token"] = data.get("token")
+        fields["chat"] = data.get("chat")
+    elif operation in ("verify", "restore"):
+        fields["name"] = data.get("name")
+    if operation == "restore":
+        # A destructive restore is deliberately NOT authorized by an API key or
+        # browser login alone. The current account password (+ MFA, if enabled)
+        # and exact archive-name confirmation are mandatory.
+        password = data.get("password")
+        if not isinstance(password, str) or len(password) > 1024:
+            return ResponseObject(False, "Current admin password required", status_code=403)
+        try:
+            valid_password = bcrypt.checkpw(
+                password.encode("utf-8"),
+                DashboardConfig.GetConfig("Account", "password")[1].encode("utf-8"))
+        except (ValueError, TypeError):
+            valid_password = False
+        totp_on = DashboardConfig.GetConfig("Account", "enable_totp")[1]
+        totp = data.get("totp", "")
+        totp_valid = (not totp_on or (
+            isinstance(totp, str) and len(totp) <= 12 and
+            pyotp.TOTP(DashboardConfig.GetConfig("Account", "totp_key")[1]).verify(totp)
+        ))
+        if not valid_password or not totp_valid:
+            return ResponseObject(False, "Password or MFA verification failed", status_code=403)
+        name = fields.get("name", "")
+        if (not isinstance(name, str)
+                or data.get("confirmation") != "RESTORE " + name):
+            return ResponseObject(False, "Type RESTORE and the selected filename exactly", status_code=400)
+        fields["confirmation"] = data.get("confirmation")
+    result = backup_panel_call(operation, **fields)
+    return ResponseObject(result["ok"], result.get("message"), result.get("data"))
+
 
 @app.get(f'{APP_PREFIX}/api/getWireguardConfigurations')
 def API_getWireguardConfigurations():
