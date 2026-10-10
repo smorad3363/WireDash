@@ -118,6 +118,23 @@ class ImportBackupTests(unittest.TestCase):
             imp.import_backup(self.root, dangerous.name, self.verify_mock)
         self.assertEqual(len(list(self.out.glob("*.tar.gz"))), 0)
 
+    def test_multi_upload_is_atomic_if_second_archive_is_invalid(self):
+        stage = self.uploads / ("c"*32)
+        stage.mkdir()
+        valid = stage / "one.tar.gz"
+        corrupt = stage / "two.tar.gz"
+        self.archive(valid)
+        corrupt.write_bytes(b"invalid gzip archive")
+        # The importer orders by modification time, so first process the
+        # valid file and then force failure on the corrupt file.
+        os.utime(valid, (1000000200, 1000000200))
+        os.utime(corrupt, (1000000100, 1000000100))
+        with self.assertRaises(ValueError):
+            imp.import_upload("c"*32, self.verify_mock)
+        self.assertFalse(stage.exists())
+        self.assertEqual(len(list(self.out.glob("*.tar.gz"))), 0)
+        self.assertEqual(len(list(self.out.glob("*.sha256"))), 0)
+
     def test_upload_rejects_extra_files(self):
         stage = self.uploads / ("b"*32)
         stage.mkdir()
