@@ -171,7 +171,9 @@ def call(operation, payload):
 
 class Handler(socketserver.StreamRequestHandler):
     def handle(self):
-        self.connection.settimeout(245)
+        # The host-side verifier may need several minutes for a multi-GiB
+        # SQLite backup. This is an authenticated administrator-only action.
+        self.connection.settimeout(900)
         try:
             raw = self.rfile.readline(MAX_REQUEST_BYTES + 1)
             if not raw or len(raw) > MAX_REQUEST_BYTES:

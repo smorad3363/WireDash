@@ -13,7 +13,8 @@ def backup_panel_call(operation, **fields):
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
             conn.settimeout(80 if operation == "set_telegram" else
-                            245 if operation in ("verify", "restore", "import_root", "import_upload") else 30)
+                            900 if operation in ("import_root", "import_upload") else
+                            245 if operation in ("verify", "restore") else 30)
             conn.connect(SOCKET)
             conn.sendall(message + b"\n")
             with conn.makefile("rb") as stream:

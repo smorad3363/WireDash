@@ -55,6 +55,40 @@ class ImportBackupTests(unittest.TestCase):
             self.assertIn("data/db/settings.db", archive.getnames())
         return True
 
+    def test_large_sqlite_archive_entry_is_allowed(self):
+        """Regression: 285 MiB of compressed parts can contain >512 MiB DB."""
+        entry = tarfile.TarInfo("data/db/large.db")
+        entry.size = 700 * 1024 * 1024  # header size only; no 700 MiB allocation
+        class HeaderOnlyTar:
+            def __enter__(self): return self
+            def __exit__(self, *unused): return False
+            def __iter__(self): return iter([entry])
+        with patch.object(imp.tarfile, "open", return_value=HeaderOnlyTar()):
+            extracted_size = imp._precheck_tar(Path("synthetic.tar.gz"))
+        self.assertEqual(extracted_size, entry.size)
+
+    def test_large_total_extraction_still_rejected(self):
+        """Never disable aggregate checks against decompression bombs."""
+        entry = tarfile.TarInfo("data/db/large.db")
+        entry.size = imp.LIMIT_EXTRACT_BYTES + 1
+        class HeaderOnlyTar:
+            def __enter__(self): return self
+            def __exit__(self, *unused): return False
+            def __iter__(self): return iter([entry])
+        with patch.object(imp.tarfile, "open", return_value=HeaderOnlyTar()):
+            with self.assertRaisesRegex(ValueError, "12 GiB"):
+                imp._precheck_tar(Path("synthetic.tar.gz"))
+
+    def test_low_disk_space_is_reported_before_extraction(self):
+        source = self.root / "pre-migrate-20261010-010101.tar.gz"
+        self.archive(source)
+        with patch.object(imp.shutil, "disk_usage") as disk:
+            disk.return_value.free = 1024  # bytes; far below 1 GiB reserve
+            with self.assertRaisesRegex(ValueError, "Not enough free disk space"):
+                imp.import_backup(self.root, source.name, self.verify_mock)
+        self.assertEqual(len(list(self.out.glob("*.tar.gz"))), 0)
+        self.assertTrue(source.is_file())
+
     def test_root_pre_migrate_import_without_supplied_sha(self):
         original = self.root / "pre-migrate-20261009-230907.tar.gz"
         self.archive(original)

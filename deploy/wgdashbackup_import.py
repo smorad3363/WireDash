@@ -25,8 +25,11 @@ BACKUP_BIN = "/usr/local/bin/wgdashbackup"
 FILENAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,180}\.tar\.gz(?:\.part-([0-9]{3,4}))?$")
 UPLOAD_ID = re.compile(r"^[a-f0-9]{32}$")
 LIMIT_BYTES = 900 * 1024 * 1024
-LIMIT_MEMBER_BYTES = 512 * 1024 * 1024
-LIMIT_EXTRACT_BYTES = 3 * 1024 * 1024 * 1024
+# Full backups can contain multi-GiB SQLite DBs even when their compressed
+# Telegram parts are only a few hundred MiB. Bound the SUM of extracted data
+# instead of incorrectly rejecting any individual file above 512 MiB.
+LIMIT_EXTRACT_BYTES = 12 * 1024 * 1024 * 1024
+MIN_FREE_DISK_RESERVE = 1024 * 1024 * 1024
 MAX_FILES = 32
 MAX_TAR_MEMBERS = 25000
 
@@ -136,11 +139,13 @@ def _precheck_tar(path):
                 "data/", "etc/wireguard/", "etc/amnezia/amneziawg/"
             ))):
                 raise ValueError("Unsupported full-backup archive layout")
-            if member.size > LIMIT_MEMBER_BYTES:
-                raise ValueError("Archive entry exceeds the import size limit")
+            # Do not remove the extraction bound: this prevents importing a
+            # compressed file that could exhaust host disk during verification.
+            # Counting directory sizes is harmless; normal TAR dirs have size 0.
             bytes_total += member.size
             if bytes_total > LIMIT_EXTRACT_BYTES:
-                raise ValueError("Archive would extract too much data")
+                raise ValueError("Backup exceeds the 12 GiB extracted-data safety limit")
+    return bytes_total
 
 
 def import_backup(directory, name, execute):
@@ -157,10 +162,22 @@ def import_backup(directory, name, execute):
         candidate = Path(tmp) / "candidate.tar.gz"
         digest = _copy_parts(found["_paths"], candidate)
         try:
-            _precheck_tar(candidate)
+            extracted_size = _precheck_tar(candidate)
         except (tarfile.TarError, EOFError, OSError) as exc:
             raise ValueError("Backup archive is corrupt or unsupported") from exc
-        if not execute([BACKUP_BIN, "--verify", str(candidate)], timeout=240):
+        # wireback --verify extracts a second copy under ARCHIVES. Preflight
+        # disk space before launching TAR extraction; never guess from the
+        # much smaller compressed multipart size.
+        free_bytes = shutil.disk_usage(ARCHIVES).free
+        reserve_bytes = max(MIN_FREE_DISK_RESERVE, extracted_size // 10)
+        if free_bytes < extracted_size + reserve_bytes:
+            raise ValueError(
+                "Not enough free disk space to verify this backup: "
+                "requires about %d MiB free, available %d MiB. "
+                "Free disk space and retry; no backup was restored."
+                % ((extracted_size + reserve_bytes + 1048575) // 1048576,
+                   free_bytes // 1048576))
+        if not execute([BACKUP_BIN, "--verify", str(candidate)], timeout=600):
             raise ValueError("TAR/SQLite integrity verification failed; not imported")
         label = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
         destination = ARCHIVES / (
