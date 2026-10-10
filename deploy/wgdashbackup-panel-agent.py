@@ -15,6 +15,7 @@ import subprocess
 import uuid
 import hashlib
 import wgdashbackup_import as importer
+from wgdashbackup_progress import read_progress, write_progress
 
 SOCKET_DIR = Path("/run/wgdashbackup-panel")
 SOCKET = SOCKET_DIR / "control.sock"
@@ -95,6 +96,7 @@ def status():
             "lastAttemptEpoch": read_number("last-attempt.epoch"),
             "archives": list_archives(),
             "discoveredBackups": importer.visible_root(),
+            "restoreProgress": read_progress(),
         }
     except OSError:
         raise ValueError("Unable to read backup status") from None
@@ -158,14 +160,23 @@ def call(operation, payload):
             return {"verified": True, "name": name}
         if payload.get("confirmation") != "RESTORE " + name:
             raise ValueError("Restore confirmation does not match the selected file")
-        # Independent systemd job remains alive when restoration stops the panel.
-        unit = "wiredash-panel-restore-" + uuid.uuid4().hex[:12]
+        # The detached systemd job survives stopping the panel container. The
+        # root-only status file remains available as soon as it reconnects.
+        previous = read_progress()
+        if (previous and previous["state"] in ("queued", "running")):
+            # Old, abandoned jobs are not silently replaced: manual inspection
+            # is safer than allowing competing destructive restores.
+            raise ValueError("A restore is already queued or in progress; inspect host restore status")
+        job_id = uuid.uuid4().hex[:12]
+        unit = "wiredash-panel-restore-" + job_id
+        write_progress(job_id, "queued", 0, "queued", archive=name)
         if not execute([
             "systemd-run", "--collect", "--no-block", "--unit=" + unit,
-            BACKUP_BIN, "--restore-approved", str(path), digest,
+            BACKUP_BIN, "--restore-approved", str(path), digest, job_id,
         ], timeout=20):
+            write_progress(job_id, "failed", 0, "failed")
             raise ValueError("Unable to queue restore job")
-        return {"queued": True, "unit": unit}
+        return {"queued": True, "unit": unit, "progress": read_progress()}
     raise ValueError("Unknown backup operation")
 
 
