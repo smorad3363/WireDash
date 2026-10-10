@@ -313,7 +313,7 @@ backup() {
   mapfile -t old < <(find "$OUT" -maxdepth 1 -type f -name 'wgdashboard-*.tar.gz' \
     -printf '%T@ %p\\n' | sort -nr | cut -d' ' -f2- | \
     while IFS= read -r pending; do
-      [[ -f "$pending.sent" ]] || printf '%s\\n' "$pending"
+      [[ -f "$pending.sent" || -f "$pending.imported" ]] || printf '%s\\n' "$pending"
     done | tail -n +5)
   for part in "${old[@]}"; do rm -f -- "$part" "$part.sha256"; done
 

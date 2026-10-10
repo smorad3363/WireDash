@@ -13,13 +13,15 @@ import socketserver
 import stat
 import subprocess
 import uuid
+import hashlib
+import wgdashbackup_import as importer
 
 SOCKET_DIR = Path("/run/wgdashbackup-panel")
 SOCKET = SOCKET_DIR / "control.sock"
 ARCHIVES = Path("/var/backups/wgdashboard")
 CFG = Path("/etc/wgdashbackup")
 BACKUP_BIN = "/usr/local/bin/wgdashbackup"
-VALID_NAME = re.compile(r"^wgdashboard-[0-9]{8}-[0-9]{6}\.tar\.gz$")
+VALID_NAME = re.compile(r"^wgdashboard-(?:imported-)?[0-9]{8}-[0-9]{6}(?:-[a-f0-9]{8})?\.tar\.gz$")
 SHA_RE = re.compile(r"^[a-f0-9]{64}$")
 MAX_REQUEST_BYTES = 4096
 
@@ -73,7 +75,8 @@ def list_archives():
         entries.append({
             "name": path.name, "bytes": info.st_size,
             "modified": int(info.st_mtime),
-            "sha256": expected, "telegramSent": Path(str(path) + ".sent").is_file()
+            "sha256": expected, "telegramSent": Path(str(path) + ".sent").is_file(),
+            "imported": Path(str(path) + ".imported").is_file()
         })
     return sorted(entries, key=lambda item: item["modified"], reverse=True)[:30]
 
@@ -91,6 +94,7 @@ def status():
             "lastFailureEpoch": read_number("last-failure.epoch"),
             "lastAttemptEpoch": read_number("last-attempt.epoch"),
             "archives": list_archives(),
+            "discoveredBackups": importer.visible_root(),
         }
     except OSError:
         raise ValueError("Unable to read backup status") from None
@@ -119,6 +123,12 @@ def call(operation, payload):
         if not execute([BACKUP_BIN, "--configure-stdin"], token + "\n" + chat + "\n", timeout=75):
             raise ValueError("Telegram validation failed; existing settings were preserved")
         return status()
+    if operation == "import_root":
+        result = importer.import_backup(importer.ROOT, payload.get("name"), execute)
+        return {"imported": [result], "status": status()}
+    if operation == "import_upload":
+        imported = importer.import_upload(payload.get("uploadId"), execute)
+        return {"imported": imported, "status": status()}
     if operation == "backup_now":
         if not status()["configured"]:
             raise ValueError("Configure Telegram before requesting a backup")
@@ -129,10 +139,18 @@ def call(operation, payload):
         name = payload.get("name")
         path = archive_path(name)
         digest = next((item["sha256"] for item in list_archives() if item["name"] == name), "")
-        if not digest:
-            raise ValueError("Backup has no SHA256 sidecar; verify it manually on the host")
-        if not execute([BACKUP_BIN, "--verify", str(path), digest], timeout=240):
+        # When an older backup has no sidecar, verify the TAR/SQLite first,
+        # then generate its local SHA256 automatically. Do not equate this
+        # locally computed digest with original sender authenticity.
+        command = [BACKUP_BIN, "--verify", str(path)] + ([digest] if digest else [])
+        if not execute(command, timeout=240):
             raise ValueError("Backup failed archive/SQLite integrity verification")
+        if not digest:
+            with path.open("rb") as stream:
+                digest = hashlib.file_digest(stream, "sha256").hexdigest()
+            sidecar = Path(str(path) + ".sha256")
+            sidecar.write_text(digest + "  " + path.name + "\n")
+            sidecar.chmod(0o600)
         if operation == "verify":
             return {"verified": True, "name": name}
         if payload.get("confirmation") != "RESTORE " + name:
