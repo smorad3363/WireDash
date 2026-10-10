@@ -342,14 +342,25 @@ fi
 # socket or any host backup directory. Existing Compose layouts are preserved.
 install -d -m 0700 /run/wgdashbackup-panel
 python3 - "$COMPOSE" <<'PY'
-import pathlib,sys
+import pathlib,re,sys
 p=pathlib.Path(sys.argv[1]); s=p.read_text()
 mount="      - /run/wgdashbackup-panel:/run/wgdashbackup-panel:ro"
 if mount not in s:
-    anchor="      - data:/data"
-    if s.count(anchor)!=1:
-        raise SystemExit("Cannot safely locate wgdashboard data mount for backup agent")
-    s=s.replace(anchor,anchor+"\n"+mount)
+    # The installer also supports an explicitly migrated upstream deployment
+    # whose existing volume names do not necessarily match our template.
+    service=re.search(r"(?m)^  wgdashboard:[ \t]*$",s)
+    if not service:
+        raise SystemExit("Cannot safely find wgdashboard service in Compose")
+    next_service=re.search(r"(?m)^  [A-Za-z0-9_-]+:[ \t]*$",s[service.end():])
+    end=service.end()+next_service.start() if next_service else len(s)
+    section=s[service.end():end]
+    volumes=re.search(r"(?m)^    volumes:[ \t]*$",section)
+    if not volumes:
+        raise SystemExit("Cannot safely find wgdashboard volumes in Compose")
+    after=section[volumes.end():]
+    boundary=re.search(r"(?m)^    [A-Za-z0-9_-]+:",after)
+    volume_end=service.end()+volumes.end()+(boundary.start() if boundary else len(after))
+    s=s[:volume_end].rstrip("\n")+"\n"+mount+"\n"+s[volume_end:]
     p.write_text(s)
 PY
 step 6 'deploy image and verify running HTTP API'
