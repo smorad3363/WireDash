@@ -119,12 +119,17 @@ def login():
     if not re.fullmatch(r"\+[1-9]\d{6,14}", phone):
         raise ValueError("Invalid phone")
     from telethon.sync import TelegramClient
-    with TelegramClient(str(SESSION), int(api_id), api_hash) as client:
+    client = TelegramClient(str(SESSION), int(api_id), api_hash)
+    try:
+        # Do not use a context manager here: it may invoke an interactive
+        # Telethon default start() before our explicit secure callbacks.
         client.start(phone=lambda: phone,
                      code_callback=lambda: input("Telegram login code: ").strip(),
                      password=lambda: getpass.getpass("Telegram 2FA password: "))
         if not client.is_user_authorized() or client.is_bot():
             raise ValueError("Telegram USER authorization is required")
+    finally:
+        client.disconnect()
     tmp = CFG / ".telegram-client.tmp"
     tmp.write_text(json.dumps({"api_id": int(api_id), "api_hash": api_hash}))
     tmp.chmod(0o600)
