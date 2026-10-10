@@ -207,6 +207,7 @@ fetch() {
 fetch deploy/compose.yaml "$STAGE/compose.yaml"
 fetch deploy/wgdashbackup.sh "$STAGE/wgdashbackup.sh"
 fetch deploy/wgdashbackup-panel-agent.py "$STAGE/wgdashbackup-panel-agent.py"
+fetch deploy/wgdashbackup_import.py "$STAGE/wgdashbackup_import.py"
 fetch deploy/wgdashbackup-panel.service "$STAGE/wgdashbackup-panel.service"
 fetch deploy/wgd-watchdog.sh "$STAGE/wgd-watchdog.sh"
 fetch deploy/wgd-watchdog.service "$STAGE/wgd-watchdog.service"
@@ -340,27 +341,31 @@ PY
 fi
 # Mount a restricted Unix control socket into the panel, never the Docker
 # socket or any host backup directory. Existing Compose layouts are preserved.
-install -d -m 0700 /run/wgdashbackup-panel
+install -d -m 0700 /run/wgdashbackup-panel /var/lib/wgdashbackup-import
 if ! python3 - "$COMPOSE" <<'PY'
 import pathlib,re,sys
 p=pathlib.Path(sys.argv[1]); s=p.read_text()
-mount="      - /run/wgdashbackup-panel:/run/wgdashbackup-panel:ro"
-if mount not in s:
-    # The installer also supports an explicitly migrated upstream deployment
-    # whose existing volume names do not necessarily match our template.
-    service=re.search(r"(?m)^  wgdashboard:[ \t]*$",s)
-    if not service:
-        raise SystemExit("Cannot safely find wgdashboard service in Compose")
-    next_service=re.search(r"(?m)^  [A-Za-z0-9_-]+:[ \t]*$",s[service.end():])
-    end=service.end()+next_service.start() if next_service else len(s)
-    section=s[service.end():end]
-    volumes=re.search(r"(?m)^    volumes:[ \t]*$",section)
-    if not volumes:
-        raise SystemExit("Cannot safely find wgdashboard volumes in Compose")
-    after=section[volumes.end():]
-    boundary=re.search(r"(?m)^    [A-Za-z0-9_-]+:",after)
-    volume_end=service.end()+volumes.end()+(boundary.start() if boundary else len(after))
-    s=s[:volume_end].rstrip("\n")+"\n"+mount+"\n"+s[volume_end:]
+mounts=[
+    "      - /run/wgdashbackup-panel:/run/wgdashbackup-panel:ro",
+    "      - /var/lib/wgdashbackup-import:/var/lib/wgdashbackup-import:rw",
+]
+# This supports both the standard WireDash layout and explicitly migrated
+# existing deployments with nonstandard named volumes.
+service=re.search(r"(?m)^  wgdashboard:[ \t]*$",s)
+if not service:
+    raise SystemExit("Cannot safely find wgdashboard service in Compose")
+next_service=re.search(r"(?m)^  [A-Za-z0-9_-]+:[ \t]*$",s[service.end():])
+end=service.end()+next_service.start() if next_service else len(s)
+section=s[service.end():end]
+volumes=re.search(r"(?m)^    volumes:[ \t]*$",section)
+if not volumes:
+    raise SystemExit("Cannot safely find wgdashboard volumes in Compose")
+after=section[volumes.end():]
+boundary=re.search(r"(?m)^    [A-Za-z0-9_-]+:",after)
+volume_end=service.end()+volumes.end()+(boundary.start() if boundary else len(after))
+missing=[m for m in mounts if m not in section]
+if missing:
+    s=s[:volume_end].rstrip("\n")+"\n"+"\n".join(missing)+"\n"+s[volume_end:]
     p.write_text(s)
 PY
 then
@@ -407,10 +412,12 @@ if ((SKIP_BACKUP==0)); then
   install -d -m 0700 /usr/local/libexec
   agent_changed=0
   if ! cmp -s "$STAGE/wgdashbackup-panel-agent.py" /usr/local/libexec/wgdashbackup-panel-agent.py ||
+     ! cmp -s "$STAGE/wgdashbackup_import.py" /usr/local/libexec/wgdashbackup_import.py ||
      ! cmp -s "$STAGE/wgdashbackup-panel.service" /etc/systemd/system/wgdashbackup-panel.service; then
     agent_changed=1
   fi
   install -m 0700 "$STAGE/wgdashbackup-panel-agent.py" /usr/local/libexec/wgdashbackup-panel-agent.py
+  install -m 0600 "$STAGE/wgdashbackup_import.py" /usr/local/libexec/wgdashbackup_import.py
   install -m 0644 "$STAGE/wgdashbackup-panel.service" /etc/systemd/system/wgdashbackup-panel.service
   systemctl daemon-reload
   systemctl enable --now wgdashbackup-panel.service

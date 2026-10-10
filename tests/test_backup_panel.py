@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import patch
 import sys
 sys.path.insert(0, str(Path("src").resolve()))
+sys.path.insert(0, str(Path("deploy").resolve()))
 
 MODULE_PATH = Path("deploy/wgdashbackup-panel-agent.py")
 SPEC = importlib.util.spec_from_file_location("wiredash_backup_agent", MODULE_PATH)

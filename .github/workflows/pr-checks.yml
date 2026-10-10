@@ -19,6 +19,10 @@ jobs:
         run: python3 tests/check_patch.py
       - name: Host backup bridge and panel contract tests
         run: python3 tests/test_backup_panel.py
+      - name: Legacy root backup and multipart import tests
+        run: python3 tests/test_backup_import.py
+      - name: Real wireback legacy archive and multipart verifier rehearsal
+        run: python3 tests/test_backup_shell_verify.py
       - name: Peer traffic quota tests
         run: python3 tests/test_peer_limits.py
       - name: Polling and peer reuse regression tests
@@ -54,6 +58,7 @@ jobs:
             grep -Rq "Download:" /opt/wgdashboard/src/static/dist/WGDashboardClient/assets
             grep -Rq "Upload:" /opt/wgdashboard/src/static/dist/WGDashboardClient/assets
             grep -Rq "Automatic Backup" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
+            grep -Rq "Upload, verify" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
           '
       - name: Synthetic 5000 peers under 50 concurrent API clients
         run: |

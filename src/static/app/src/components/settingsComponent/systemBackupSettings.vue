@@ -1,6 +1,6 @@
 <script setup>
 import {onMounted, ref} from "vue";
-import {fetchGet, fetchPost} from "@/utilities/fetch.js";
+import {fetchGet, fetchPost, getUrl} from "@/utilities/fetch.js";
 
 const status = ref(null)
 const loading = ref(true)
@@ -14,6 +14,43 @@ const restoreName = ref("")
 const confirmation = ref("")
 const password = ref("")
 const totp = ref("")
+const uploadFiles = ref([])
+const uploadedInput = ref(null)
+const formatSelectedFiles = (event) => {
+  uploadFiles.value = Array.from(event.target.files || [])
+}
+const importSelectedFiles = async () => {
+  if (busy.value || !uploadFiles.value.length || uploadFiles.value.length > 32) return
+  busy.value = true
+  message.value = "Uploading and checking backup files. This can take a few minutes..."
+  messageError.value = false
+  try {
+    const form = new FormData()
+    uploadFiles.value.forEach(file => form.append("files", file, file.name))
+    const response = await fetch(getUrl("/api/ui/systemBackup/import"), {
+      method: "POST", credentials: "same-origin", body: form
+    })
+    const body = await response.json()
+    notify(body, "Backup files verified and imported")
+    if (body?.status) {
+      const items = body.data?.imported || []
+      message.value = items.length + " full backup(s) verified and imported into Restore."
+      uploadFiles.value = []
+      if (uploadedInput.value) uploadedInput.value.value = ""
+      if (body.data?.status) status.value = body.data.status
+      else await refresh()
+    }
+  } catch (e) {
+    messageError.value = true
+    message.value = "Upload or import failed; check file size and backup format."
+  } finally {
+    busy.value = false
+  }
+}
+const importRootBackup = async (name) => {
+  await execute("import_root", {name}, "Backup verified and imported into Restore")
+  await refresh()
+}
 
 const notify = (res, fallback) => {
   messageError.value = !res?.status
@@ -43,6 +80,9 @@ const execute = async (operation, fields = {}, text = "Updated") => {
       if (res.data?.archives) {
         status.value = res.data
         interval.value = res.data.intervalMinutes
+      } else if (res.data?.status?.archives) {
+        status.value = res.data.status
+        interval.value = res.data.status.intervalMinutes
       }
       if (operation === "set_telegram") token.value = ""
       if (operation === "restore") {
@@ -132,17 +172,53 @@ onMounted(refresh)
           </div>
         </div>
         <div class="border rounded-3 p-3 d-flex flex-column gap-2">
+          <h6 class="mb-0">Import old full backups</h6>
+          <p class="small text-muted mb-0">Place .tar.gz backups or their .part-0000 / .part-0001 pieces directly inside
+            <code>/root</code> on the Ubuntu host. The panel detects them below automatically.
+            No separate SHA256 file is required: imported archives are checked and hashed by the server.
+            Files in /root are never modified.</p>
+          <div v-if="!status.discoveredBackups?.length" class="small text-muted">
+            No supported archive files detected in /root.
+          </div>
+          <div v-for="item in status.discoveredBackups || []" :key="item.name"
+               class="border-bottom py-2 d-flex flex-wrap align-items-center gap-2 small">
+            <div class="flex-grow-1">
+              <strong>{{item.name}}</strong>
+              <div class="text-muted">{{item.files}} file(s), {{fileSize(item.bytes)}}
+                • {{item.complete ? "Ready to check" : "Missing or invalid parts"}}</div>
+            </div>
+            <button class="btn btn-sm btn-outline-primary" type="button"
+                    :disabled="busy || !item.complete"
+                    @click="importRootBackup(item.name)">Verify & import from /root</button>
+          </div>
+          <hr class="my-2">
+          <h6 class="mb-0">Upload files from this device</h6>
+          <p class="text-muted small mb-0">Choose one or multiple complete backups, or select all numbered Telegram
+            parts together. Maximum 32 files / 900 MiB combined. Files are checked, combined in order,
+            and imported without any manual checksum.</p>
+          <input class="form-control" type="file" multiple ref="uploadedInput"
+                 :disabled="busy" @change="formatSelectedFiles">
+          <div v-if="uploadFiles.length" class="small text-muted">
+            {{uploadFiles.length}} files selected ({{fileSize(uploadFiles.reduce((sum, file) => sum + file.size, 0))}})
+          </div>
+          <div>
+            <button class="btn btn-sm btn-primary" type="button"
+                    :disabled="busy || uploadFiles.length === 0 || uploadFiles.length > 32"
+                    @click="importSelectedFiles">Upload, verify & import</button>
+          </div>
+        </div>
+        <div class="border rounded-3 p-3 d-flex flex-column gap-2">
           <h6 class="mb-0">Local full backups</h6>
           <div v-if="!status.archives.length" class="text-muted small">No full backups stored locally. Telegram configuration and the first backup may be needed.</div>
           <div v-for="file in status.archives" :key="file.name"
                class="d-flex flex-wrap align-items-center gap-2 border-bottom py-2 small">
             <div class="flex-grow-1">
               <strong>{{file.name}}</strong>
-              <div class="text-muted">{{fileSize(file.bytes)}} • {{displayDate(file.modified)}} • {{file.telegramSent ? "Sent to Telegram" : "Local only"}}</div>
+              <div class="text-muted">{{fileSize(file.bytes)}} • {{displayDate(file.modified)}} • {{file.telegramSent ? "Sent to Telegram" : (file.imported ? "Imported backup" : "Local only")}}</div>
             </div>
-            <button class="btn btn-sm btn-outline-secondary" :disabled="busy || !file.sha256"
+            <button class="btn btn-sm btn-outline-secondary" :disabled="busy"
                     @click="verify(file.name)">Verify</button>
-            <button class="btn btn-sm btn-outline-danger" :disabled="busy || !file.sha256"
+            <button class="btn btn-sm btn-outline-danger" :disabled="busy"
                     @click="restoreName = file.name; confirmation = ''; password = ''; totp = ''">Restore...</button>
           </div>
         </div>
