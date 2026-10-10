@@ -45,6 +45,8 @@ def write_progress(job_id, state, percent, phase, archive=None):
                                 len(archive) > 200 or "/" in archive):
         raise ValueError("Invalid restore archive")
     previous = read_progress()
+    if state == "failed" and percent == 0 and previous and previous["jobId"] == job_id:
+        percent = previous["percent"]
     if previous and previous["jobId"] != job_id and state != "queued":
         raise ValueError("Restore progress belongs to a different job")
     data = {
