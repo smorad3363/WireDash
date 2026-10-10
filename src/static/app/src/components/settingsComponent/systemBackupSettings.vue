@@ -10,6 +10,44 @@ const messageError = ref(false)
 const interval = ref(30)
 const token = ref("")
 const chat = ref("")
+const telegramLink = ref("")
+const telegramDownload = ref(null)
+const telegramDownloadAvailable = ref(false)
+const telegramPhases = {
+  queued: "Queued on the server",
+  downloading: "Downloading Telegram backup parts",
+  checking: "Checking SHA256 of all parts",
+  importing: "Verifying full TAR and SQLite backup",
+  completed: "Ready: verify and select Restore below",
+  failed: "Telegram download failed",
+}
+let telegramPolling = false
+const pollTelegram = async () => {
+  if (telegramPolling || !telegramDownload.value ||
+      !["queued", "running"].includes(telegramDownload.value.state)) return
+  telegramPolling = true
+  try {
+    const response = await fetch(getUrl("/api/ui/systemBackup"), {
+      credentials: "same-origin", cache: "no-store"
+    })
+    const body = await response.json()
+    if (body?.status && body.data) {
+      telegramDownload.value = body.data.telegramDownload
+      telegramDownloadAvailable.value = body.data.telegramDownloadConfigured
+      status.value = body.data
+    }
+  } catch (e) {
+    // A temporary service restart does not abort a detached download job.
+  } finally {
+    telegramPolling = false
+  }
+}
+const downloadFromTelegram = async () => {
+  if (!telegramLink.value || busy.value) return
+  await execute("download_telegram", {link: telegramLink.value.trim()},
+    "Telegram backup download scheduled on VPS")
+  await pollTelegram()
+}
 const restoreName = ref("")
 const confirmation = ref("")
 const password = ref("")
@@ -100,6 +138,8 @@ const refresh = async () => {
   await fetchGet("/api/ui/systemBackup", {}, (res) => {
     if (res?.status) {
       status.value = res.data
+      telegramDownload.value = res.data.telegramDownload
+      telegramDownloadAvailable.value = res.data.telegramDownloadConfigured
       restoreProgress.value = res.data.restoreProgress
       interval.value = res.data.intervalMinutes
       messageError.value = false
@@ -119,12 +159,19 @@ const execute = async (operation, fields = {}, text = "Updated") => {
     if (res?.status) {
       if (res.data?.archives) {
         status.value = res.data
+        telegramDownload.value = res.data.telegramDownload
+        telegramDownloadAvailable.value = res.data.telegramDownloadConfigured
         restoreProgress.value = res.data.restoreProgress
         interval.value = res.data.intervalMinutes
       } else if (res.data?.status?.archives) {
         status.value = res.data.status
+        telegramDownload.value = res.data.status.telegramDownload
+        telegramDownloadAvailable.value = res.data.status.telegramDownloadConfigured
         restoreProgress.value = res.data.status.restoreProgress
         interval.value = res.data.status.intervalMinutes
+      }
+      if (operation === "download_telegram" && res.data?.job) {
+        telegramDownload.value = res.data.job
       }
       if (operation === "restore" && res.data?.progress) {
         restoreProgress.value = res.data.progress
@@ -158,7 +205,10 @@ const displayDate = (epoch) => epoch ? new Date(epoch * 1000).toLocaleString() :
 const fileSize = (bytes) => (bytes / 1048576).toFixed(2) + " MiB"
 onMounted(async () => {
   await refresh()
-  progressTimer = setInterval(pollRestoreProgress, 3000)
+  progressTimer = setInterval(() => {
+    pollRestoreProgress()
+    pollTelegram()
+  }, 3000)
 })
 onUnmounted(() => {
   if (progressTimer) clearInterval(progressTimer)
@@ -225,6 +275,51 @@ onUnmounted(() => {
           <div><button class="btn btn-sm btn-primary" type="button" :disabled="busy || !token || !chat"
                        @click="saveTelegram">Verify & save Telegram</button></div>
           <small class="text-muted">Send /start to your bot before saving. Credentials are stored on the server only.</small>
+        </div>
+        <div class="border rounded-3 p-3 d-flex flex-column gap-2">
+          <h6 class="mb-0">Download a backup directly from Telegram</h6>
+          <p class="small text-muted mb-0">
+            One-time VPS setup: <code>sudo wireback --telegram-login</code>.
+            Connect a Telegram USER account with access to the bot's private chat or backup channel.
+            Then paste the message link of <strong>PART 1</strong>; the VPS finds and downloads the
+            remaining parts, checks their SHA256, and imports the backup. No files pass through your browser.
+            Import never starts a destructive restore automatically.
+          </p>
+          <div v-if="!telegramDownloadAvailable" class="small text-warning">
+            Telegram user connection not configured. Run the one-time SSH login first.
+            Bot token alone cannot download the large archived documents.
+          </div>
+          <div class="d-flex flex-wrap align-items-center gap-2">
+            <input class="form-control flex-grow-1" style="min-width:240px" v-model="telegramLink"
+                   type="url" autocomplete="off" placeholder="https://t.me/channel/12345 or https://t.me/c/12345/67890">
+            <button class="btn btn-sm btn-primary" type="button"
+                    :disabled="busy || !telegramDownloadAvailable || !telegramLink ||
+                      ['queued','running'].includes(telegramDownload?.state)"
+                    @click="downloadFromTelegram">Download & verify on VPS</button>
+          </div>
+          <div v-if="telegramDownload" class="d-flex flex-column gap-2 small" aria-live="polite">
+            <div class="d-flex justify-content-between">
+              <strong>{{telegramPhases[telegramDownload.phase] || telegramDownload.phase}}</strong>
+              <span>{{telegramDownload.percent}}%</span>
+            </div>
+            <div class="progress" role="progressbar" :aria-valuenow="telegramDownload.percent"
+                 aria-valuemin="0" aria-valuemax="100">
+              <div class="progress-bar" :class="{
+                 'bg-danger': telegramDownload.state === 'failed',
+                 'bg-success': telegramDownload.state === 'completed'
+              }" :style="{width: telegramDownload.percent + '%'}"></div>
+            </div>
+            <small class="text-muted">
+              {{telegramDownload.completedParts || 0}} / {{telegramDownload.totalParts || '?'}} parts
+              ({{fileSize(telegramDownload.downloadedBytes || 0)}} downloaded)
+            </small>
+            <small v-if="telegramDownload.state === 'failed'" class="text-danger">
+              {{telegramDownload.error || "Inspect the host download journal"}}
+            </small>
+            <small v-if="telegramDownload.state === 'completed'" class="text-success">
+              {{telegramDownload.archive}} imported; choose Restore below and confirm with password/MFA.
+            </small>
+          </div>
         </div>
         <div class="border rounded-3 p-3 d-flex flex-column gap-2">
           <h6 class="mb-0">Automatic schedule</h6>

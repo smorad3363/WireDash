@@ -450,12 +450,14 @@ def API_UI_SystemBackupAction():
         return ResponseObject(False, "Invalid JSON request", status_code=400)
     operation = data.get("operation")
     allowed = ("set_interval", "enable", "disable", "set_telegram",
-               "backup_now", "verify", "restore", "import_root")
+               "backup_now", "verify", "restore", "import_root", "download_telegram")
     if operation not in allowed:
         return ResponseObject(False, "Unsupported backup operation", status_code=400)
     fields = {}
     if operation == "set_interval":
         fields["minutes"] = data.get("minutes")
+    elif operation == "download_telegram":
+        fields["link"] = data.get("link")
     elif operation == "set_telegram":
         fields["token"] = data.get("token")
         fields["chat"] = data.get("chat")
