@@ -25,6 +25,8 @@ jobs:
         run: python3 tests/test_backup_import.py
       - name: Telegram first-message link and host-only multipart reader contracts
         run: python3 tests/test_telegram_download.py
+      - name: Catalog-backed Bot API recovery without Telegram user login
+        run: python3 tests/test_bot_catalog.py
       - name: Real wireback legacy archive and multipart verifier rehearsal
         run: python3 tests/test_backup_shell_verify.py
       - name: Peer traffic quota tests
