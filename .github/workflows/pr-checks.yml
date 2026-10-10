@@ -23,6 +23,8 @@ jobs:
         run: python3 tests/test_restore_progress_compaction.py
       - name: Legacy root backup and multipart import tests
         run: python3 tests/test_backup_import.py
+      - name: Telegram first-message link and host-only multipart reader contracts
+        run: python3 tests/test_telegram_download.py
       - name: Real wireback legacy archive and multipart verifier rehearsal
         run: python3 tests/test_backup_shell_verify.py
       - name: Peer traffic quota tests
@@ -61,6 +63,7 @@ jobs:
             grep -Rq "Upload:" /opt/wgdashboard/src/static/dist/WGDashboardClient/assets
             grep -Rq "Automatic Backup" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
             grep -Rq "Full restore progress" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
+            grep -Rq "Download a backup directly from Telegram" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
             grep -Rq "Upload, verify" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
           '
       - name: Synthetic 5000 peers under 50 concurrent API clients

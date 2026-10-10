@@ -16,6 +16,7 @@ import uuid
 import hashlib
 import wgdashbackup_import as importer
 from wgdashbackup_progress import read_progress, write_progress
+import wgdashbackup_telegram as telegram
 
 SOCKET_DIR = Path("/run/wgdashbackup-panel")
 SOCKET = SOCKET_DIR / "control.sock"
@@ -97,6 +98,8 @@ def status():
             "archives": list_archives(),
             "discoveredBackups": importer.visible_root(),
             "restoreProgress": read_progress(),
+            "telegramDownloadConfigured": telegram.configured(),
+            "telegramDownload": telegram.current_job(),
         }
     except OSError:
         raise ValueError("Unable to read backup status") from None
@@ -131,6 +134,30 @@ def call(operation, payload):
     if operation == "import_upload":
         imported = importer.import_upload(payload.get("uploadId"), execute)
         return {"imported": imported, "status": status()}
+    if operation == "download_telegram":
+        link = payload.get("link")
+        telegram.parse_link(link)  # strict local-only Telegram URL parser
+        if not telegram.configured() or not telegram.VENV.is_file():
+            raise ValueError("Connect Telegram USER on VPS: sudo wireback --telegram-login")
+        previous = telegram.current_job()
+        if previous and previous["state"] in ("queued", "running"):
+            raise ValueError("Telegram download already running; wait for completion")
+        jobid = uuid.uuid4().hex[:12]
+        request = telegram.RUN / ("telegram-job-" + jobid + ".json")
+        request.write_text(json.dumps({"jobId": jobid, "link": link}))
+        request.chmod(0o600)
+        telegram.write_job(jobid, "queued", "queued", 0)
+        if not execute([
+            "systemd-run", "--collect", "--no-block",
+            "--unit=wiredash-telegram-download-" + jobid,
+            str(telegram.VENV), "/usr/local/libexec/wgdashbackup_telegram.py",
+            "download", jobid,
+        ], timeout=20):
+            request.unlink(missing_ok=True)
+            telegram.write_job(jobid, "failed", "failed", 0,
+                               error="Unable to start host download job")
+            raise ValueError("Unable to queue Telegram download")
+        return {"queued": True, "job": telegram.current_job()}
     if operation == "backup_now":
         if not status()["configured"]:
             raise ValueError("Configure Telegram before requesting a backup")

@@ -708,6 +708,22 @@ main() {
     --set-interval) [[ -n "${2:-}" ]] || { echo 'Missing interval' >&2; exit 2; }; set_interval_noninteractive "$2" ;;
     --enable) enable_schedule ;;
     --disable) disable_schedule ;;
+    --telegram-login)
+      need_root
+      [[ -f /usr/local/libexec/wgdashbackup_telegram.py ]] ||
+        { echo 'Telegram downloader missing. Upgrade WireDash first.' >&2; exit 1; }
+      if [[ ! -x /opt/wgdashbackup-telegram/venv/bin/python3 ]]; then
+        command -v python3 >/dev/null && python3 -m venv /opt/wgdashbackup-telegram/venv ||
+          { echo 'Install python3-venv: apt install python3-venv' >&2; exit 1; }
+      fi
+      if ! /opt/wgdashbackup-telegram/venv/bin/python3 -c 'import telethon' >/dev/null 2>&1; then
+        /opt/wgdashbackup-telegram/venv/bin/python3 -m pip install \
+          --disable-pip-version-check 'telethon==1.45.0' ||
+          { echo 'Could not install Telegram client dependency.' >&2; exit 1; }
+      fi
+      /opt/wgdashbackup-telegram/venv/bin/python3 \
+        /usr/local/libexec/wgdashbackup_telegram.py login
+      ;;
     --health) health ;;
     --verify) [[ -n "${2:-}" ]] || { echo 'Usage: wgdashbackup --verify FILE [SHA256]'; exit 2; }; verify_backup "$2" "${3:-}" ;;
     --restore) [[ -n "${2:-}" ]] || { echo 'Usage: wgdashbackup --restore FILE [SHA256]'; exit 2; }; restore "$2" "${3:-}" ;;
