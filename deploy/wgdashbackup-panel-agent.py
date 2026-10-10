@@ -146,8 +146,11 @@ def call(operation, payload):
         if not execute(command, timeout=240):
             raise ValueError("Backup failed archive/SQLite integrity verification")
         if not digest:
+            hasher = hashlib.sha256()
             with path.open("rb") as stream:
-                digest = hashlib.file_digest(stream, "sha256").hexdigest()
+                for block in iter(lambda: stream.read(1024 * 1024), b""):
+                    hasher.update(block)
+            digest = hasher.hexdigest()
             sidecar = Path(str(path) + ".sha256")
             sidecar.write_text(digest + "  " + path.name + "\n")
             sidecar.chmod(0o600)
