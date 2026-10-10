@@ -22,6 +22,27 @@ LAST_ATTEMPT=$CFG_DIR/last-attempt.epoch
 LAST_ALERT=$CFG_DIR/last-alert.epoch
 RETRY_STATE=$CFG_DIR/retry-state
 SCHEDULE=$CFG_DIR/interval-minutes
+RESTORE_JOB_ID=""
+RESTORE_PROGRESS_SCRIPT=/usr/local/libexec/wgdashbackup_progress.py
+restore_milestone() {
+  local phase=$1 percent=$2
+  [[ -n "$RESTORE_JOB_ID" ]] || return 0
+  python3 "$RESTORE_PROGRESS_SCRIPT" "$RESTORE_JOB_ID" running "$percent" "$phase" ||
+    log "WARN: cannot update restore progress ($phase)"
+}
+restore_approved_cleanup() {
+  local rc=$1
+  if [[ -n "$RESTORE_JOB_ID" ]]; then
+    if (( rc == 0 )); then
+      python3 "$RESTORE_PROGRESS_SCRIPT" "$RESTORE_JOB_ID" completed 100 completed ||
+        log 'WARN: unable to publish completed restore'
+    else
+      python3 "$RESTORE_PROGRESS_SCRIPT" "$RESTORE_JOB_ID" failed 0 failed ||
+        log 'WARN: unable to publish restore failure'
+    fi
+  fi
+  if (( watchdog_active )); then systemctl start wgd-watchdog.service || :; fi
+}
 
 log() {
   local line
@@ -273,6 +294,21 @@ for p in dbs:
             src.backup(dst,pages=256,sleep=.1)
             if dst.execute('PRAGMA quick_check').fetchone()!=('ok',):
                 raise SystemExit('SQLite integrity check failed: '+str(p))
+            # Only compact the OFFLINE BACKUP SNAPSHOT, never the active DB.
+            # VACUUM removes freelist pages that have accumulated as peers
+            # are added/deleted. Skip small or non-bloated DBs to save CPU.
+            pages=dst.execute('PRAGMA page_count').fetchone()[0]
+            free_pages=dst.execute('PRAGMA freelist_count').fetchone()[0]
+            page_size=dst.execute('PRAGMA page_size').fetchone()[0]
+            if (pages and free_pages*page_size >= 16*1024*1024 and
+                    free_pages*10 >= pages and
+                    shutil.disk_usage(dest.parent).free >=
+                    dest.stat().st_size*2 + 1024*1024*1024):
+                before=dest.stat().st_size
+                dst.execute('VACUUM')
+                if dst.execute('PRAGMA quick_check').fetchone()!=('ok',):
+                    raise SystemExit('Compacted SQLite snapshot failed integrity check: '+str(p))
+                print('Backup-only SQLite compaction:',p.name,before,'->',dest.stat().st_size)
 print('SQLite snapshots checked:',len(dbs))
 PY
 }
@@ -302,7 +338,9 @@ backup() {
   printf 'UTC=%s\nImage=%s\n' "$(date -u +%FT%TZ)" "$(docker inspect -f '{{.Config.Image}}' "$CONTAINER")" > "$stage/manifest.txt"
   name="wgdashboard-$(date -u +%Y%m%d-%H%M%S).tar.gz"
   archive=$tmp/$name
-  tar -C "$stage" -czf "$archive" data etc compose.yaml manifest.txt $( [[ ! -e "$stage/.env" ]] || printf '%s' '.env' )
+  # Maximum portable gzip level; archive name and restore format unchanged.
+  # This may require more CPU but never rewrites the live SQLite database.
+  tar -C "$stage" -cf - data etc compose.yaml manifest.txt $( [[ ! -e "$stage/.env" ]] || printf '%s' '.env' ) | gzip -9 > "$archive"
   tar -tzf "$archive" >/dev/null
   sha=$(sha256sum "$archive" | cut -d' ' -f1)
   mv "$archive" "$OUT/$name"
@@ -318,6 +356,7 @@ backup() {
   for part in "${old[@]}"; do rm -f -- "$part" "$part.sha256"; done
 
   size=$(stat -c%s "$archive")
+  log "Compressed backup size: $size bytes (gzip -9, compatible tar.gz)"
   if (( size > 45000000 )); then
     split -b 45000000 -d -a 4 "$archive" "$tmp/$name.part-"
     shopt -s nullglob
@@ -448,11 +487,15 @@ restore() {
   local f=$1 expected=${2:-} mode=${3:-interactive} tmp pre reply
   exec 7>/run/wgdashbackup-restore.lock
   flock -n 7 || { fail 'A full restore is already in progress.'; return 1; }
+  restore_milestone preparing 5
   need_install; ensure_dirs; mount_sources
   tmp=$(mktemp -d "$OUT/.restore.XXXXXXXX")
   resolve_archive "$f" "$tmp"
-  # Validate BEFORE stopping anything.
+  # Validate BEFORE stopping anything. These are milestone percentages,
+  # NOT progress inferred from wall-clock duration or the compressed size.
+  restore_milestone verifying 10
   verify_backup "$RESOLVED" "$expected"
+  restore_milestone extracting 30
   mkdir -p "$tmp/unpack"
   tar -xzf "$RESOLVED" -C "$tmp/unpack"
   echo 'WARNING: Restore STOPS WGDashboard/VPN and REPLACES current volume data.'
@@ -462,8 +505,10 @@ restore() {
     read -r -p 'Type RESTORE to continue: ' reply </dev/tty
     if [[ "$reply" != RESTORE ]]; then rm -rf -- "$tmp"; log 'Restore cancelled.'; return 0; fi
   fi
+  restore_milestone stopping 45
   cd /opt/wgdashboard
   docker compose -f "$COMPOSE" stop wgdashboard
+  restore_milestone snapshotting 55
   mkdir -p "$tmp/previous/data" "$tmp/previous/etc/wireguard" "$tmp/previous/etc/amnezia/amneziawg"
   cp -a "$DATA/." "$tmp/previous/data/"
   cp -a "$WG/." "$tmp/previous/etc/wireguard/"
@@ -474,14 +519,33 @@ restore() {
   tar -C "$tmp/previous" -czf "$pre" .
   tar -tzf "$pre" >/dev/null
   log "Previous state preserved locally: $pre"
+  restore_milestone applying 75
   find "$DATA" "$WG" "$AWG" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
   cp -a "$tmp/unpack/data/." "$DATA/"
   cp -a "$tmp/unpack/etc/wireguard/." "$WG/"
   cp -a "$tmp/unpack/etc/amnezia/amneziawg/." "$AWG/"
-  cp -a "$tmp/unpack/compose.yaml" "$COMPOSE"
-  [[ ! -e "$tmp/unpack/.env" ]] || cp -a "$tmp/unpack/.env" /opt/wgdashboard/.env
+  if [[ "$mode" == approved ]]; then
+    # Preserve the managed WireDash deployment (HTTP port, image pin,
+    # host backup socket and watchdog integration). The backup restores all
+    # persistent VPN/users/databases, but must not uninstall the admin panel
+    # and its progress API while it is recovering.
+    log 'Managed restore: retained current Compose and .env deployment settings.'
+  else
+    cp -a "$tmp/unpack/compose.yaml" "$COMPOSE"
+    [[ ! -e "$tmp/unpack/.env" ]] || cp -a "$tmp/unpack/.env" /opt/wgdashboard/.env
+  fi
+  restore_milestone starting 90
   docker compose -f "$COMPOSE" up -d wgdashboard
-  log 'Restore finished. Check Docker logs, VPN clients, and public endpoint.'
+  restore_milestone checking 95
+  local health='' i
+  for i in {1..40}; do
+    health=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$CONTAINER") || :
+    [[ "$health" != healthy && "$health" != running ]] || break
+    sleep 3
+  done
+  [[ "$health" == healthy || "$health" == running ]] ||
+    fail "Restored container did not become healthy (last: $health)"
+  log 'Restore completed; container running. Verify VPN clients and endpoints.'
   rm -rf -- "$tmp"
 }
 # Send a compact sanitized diagnostic. If Telegram itself fails, retain details locally;
@@ -649,12 +713,15 @@ main() {
     --restore) [[ -n "${2:-}" ]] || { echo 'Usage: wgdashbackup --restore FILE [SHA256]'; exit 2; }; restore "$2" "${3:-}" ;;
     --restore-approved)
       [[ -n "${2:-}" ]] || { echo 'Missing approved archive' >&2; exit 2; }
+      RESTORE_JOB_ID=${4:-}
+      [[ -z "$RESTORE_JOB_ID" || "$RESTORE_JOB_ID" =~ ^[a-f0-9]{12}$ ]] ||
+        { echo 'Invalid progress job token' >&2; exit 2; }
       watchdog_active=0
+      trap 'restore_approved_cleanup "$?"' EXIT
       if systemctl is-active --quiet wgd-watchdog.service; then
         watchdog_active=1
         systemctl stop wgd-watchdog.service
       fi
-      trap 'if (( watchdog_active )); then systemctl start wgd-watchdog.service || :; fi' EXIT
       restore "$2" "${3:-}" approved
       ;;
     --status) status ;;

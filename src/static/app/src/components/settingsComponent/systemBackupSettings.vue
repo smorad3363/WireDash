@@ -1,5 +1,5 @@
 <script setup>
-import {onMounted, ref} from "vue";
+import {onMounted, onUnmounted, ref} from "vue";
 import {fetchGet, fetchPost, getUrl} from "@/utilities/fetch.js";
 
 const status = ref(null)
@@ -14,6 +14,45 @@ const restoreName = ref("")
 const confirmation = ref("")
 const password = ref("")
 const totp = ref("")
+const restoreProgress = ref(null)
+const restoreDisconnected = ref(false)
+const restorePhases = {
+  queued: "Restore scheduled on host",
+  preparing: "Preparing restore directories",
+  verifying: "Verifying archive and SQLite integrity",
+  extracting: "Extracting backup data",
+  stopping: "Stopping VPN container",
+  snapshotting: "Saving current server state",
+  applying: "Restoring WireGuard and database volumes",
+  starting: "Starting VPN container",
+  checking: "Checking container health",
+  completed: "Restore completed; verify VPN clients",
+  failed: "Restore failed; inspect host journal",
+}
+let progressTimer = null
+let progressPolling = false
+const pollRestoreProgress = async () => {
+  if (progressPolling || !restoreProgress.value ||
+      !["queued", "running"].includes(restoreProgress.value.state)) return
+  progressPolling = true
+  try {
+    // Avoid the generic fetch helper: expected VPN downtime must not
+    // redirect the administrator to the login page on a transient failure.
+    const reply = await fetch(getUrl("/api/ui/systemBackup"), {
+      credentials: "same-origin", cache: "no-store"
+    })
+    if (!reply.ok) throw new Error("Restore status temporarily unavailable")
+    const body = await reply.json()
+    if (!body?.status || !body.data) throw new Error("Restore status unavailable")
+    status.value = body.data
+    restoreProgress.value = body.data.restoreProgress
+    restoreDisconnected.value = false
+  } catch (e) {
+    restoreDisconnected.value = true
+  } finally {
+    progressPolling = false
+  }
+}
 const uploadFiles = ref([])
 const uploadedInput = ref(null)
 const formatSelectedFiles = (event) => {
@@ -61,6 +100,7 @@ const refresh = async () => {
   await fetchGet("/api/ui/systemBackup", {}, (res) => {
     if (res?.status) {
       status.value = res.data
+      restoreProgress.value = res.data.restoreProgress
       interval.value = res.data.intervalMinutes
       messageError.value = false
     } else {
@@ -79,10 +119,16 @@ const execute = async (operation, fields = {}, text = "Updated") => {
     if (res?.status) {
       if (res.data?.archives) {
         status.value = res.data
+        restoreProgress.value = res.data.restoreProgress
         interval.value = res.data.intervalMinutes
       } else if (res.data?.status?.archives) {
         status.value = res.data.status
+        restoreProgress.value = res.data.status.restoreProgress
         interval.value = res.data.status.intervalMinutes
+      }
+      if (operation === "restore" && res.data?.progress) {
+        restoreProgress.value = res.data.progress
+        restoreDisconnected.value = false
       }
       if (operation === "set_telegram") token.value = ""
       if (operation === "restore") {
@@ -110,7 +156,13 @@ const initiateRestore = async () => {
 }
 const displayDate = (epoch) => epoch ? new Date(epoch * 1000).toLocaleString() : "Never"
 const fileSize = (bytes) => (bytes / 1048576).toFixed(2) + " MiB"
-onMounted(refresh)
+onMounted(async () => {
+  await refresh()
+  progressTimer = setInterval(pollRestoreProgress, 3000)
+})
+onUnmounted(() => {
+  if (progressTimer) clearInterval(progressTimer)
+})
 </script>
 
 <template>
@@ -130,6 +182,26 @@ onMounted(refresh)
         Backup and restore are unavailable until it is installed.
       </div>
       <template v-else>
+        <div v-if="restoreProgress" class="border rounded-3 p-3 d-flex flex-column gap-2" aria-live="polite">
+          <h6 class="mb-0">Full restore progress</h6>
+          <div class="d-flex justify-content-between align-items-center small">
+            <strong>{{restorePhases[restoreProgress.phase] || restoreProgress.phase}}</strong>
+            <span>{{restoreProgress.percent}}% of milestones</span>
+          </div>
+          <div class="progress" role="progressbar" :aria-valuenow="restoreProgress.percent" aria-valuemin="0" aria-valuemax="100">
+            <div class="progress-bar" :class="{
+              'bg-danger': restoreProgress.state === 'failed',
+              'bg-success': restoreProgress.state === 'completed',
+              'progress-bar-striped progress-bar-animated': restoreProgress.state === 'running'
+            }" :style="{width: restoreProgress.percent + '%'}"></div>
+          </div>
+          <small class="text-muted">Milestone-based progress, not bytes transferred or estimated time remaining.
+            During a full restore the panel and VPN can be offline; refresh resumes when the panel is back.</small>
+          <small v-if="restoreDisconnected" class="text-warning">
+            Waiting for the panel to reconnect. Restore may be running on the host.
+          </small>
+          <small v-if="restoreProgress.archive" class="text-muted">Backup: {{restoreProgress.archive}}</small>
+        </div>
         <div class="row g-2 small">
           <div class="col-md-4"><strong>Telegram:</strong> {{status.configured ? "Configured" : "Not configured"}}</div>
           <div class="col-md-4"><strong>Schedule:</strong> {{status.enabled ? "Enabled" : "Disabled"}}</div>

@@ -62,7 +62,9 @@ class HostAgentContract(unittest.TestCase):
             def runner(command, *args, **kwargs):
                 calls.append(command)
                 return True
-            with patch.object(agent, "execute", side_effect=runner):
+            with patch.object(agent, "execute", side_effect=runner), \
+                 patch.object(agent, "read_progress", return_value=None), \
+                 patch.object(agent, "write_progress", return_value=None):
                 with self.assertRaisesRegex(ValueError, "confirmation"):
                     agent.call("restore", {"name": name, "confirmation": "RESTORE"})
                 self.assertEqual(len(calls), 1)  # verify, never queue restore
@@ -70,6 +72,7 @@ class HostAgentContract(unittest.TestCase):
                     "name": name, "confirmation": "RESTORE " + name})
                 self.assertTrue(result["queued"])
                 self.assertIn("--restore-approved", calls[-1])
+                self.assertEqual(len(calls[-1][-1]), 12)
 
     def test_socket_protocol_loopback_only(self):
         import threading
