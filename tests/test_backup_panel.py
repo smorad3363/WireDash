@@ -7,6 +7,8 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
+import sys
+sys.path.insert(0, str(Path("src").resolve()))
 
 MODULE_PATH = Path("deploy/wgdashbackup-panel-agent.py")
 SPEC = importlib.util.spec_from_file_location("wiredash_backup_agent", MODULE_PATH)
@@ -67,6 +69,30 @@ class HostAgentContract(unittest.TestCase):
                     "name": name, "confirmation": "RESTORE " + name})
                 self.assertTrue(result["queued"])
                 self.assertIn("--restore-approved", calls[-1])
+
+    def test_socket_protocol_loopback_only(self):
+        import threading
+        from modules import BackupPanelBridge as bridge
+        with tempfile.TemporaryDirectory() as root:
+            sock = Path(root) / "control.sock"
+            previous_socket = bridge.SOCKET
+            try:
+                bridge.SOCKET = str(sock)
+                with patch.object(agent, "status", return_value={"available": True, "enabled": False}):
+                    with agent.Server(str(sock), agent.Handler) as server:
+                        thread = threading.Thread(target=server.serve_forever, daemon=True)
+                        thread.start()
+                        try:
+                            reply = bridge.backup_panel_call("status")
+                            self.assertTrue(reply["ok"])
+                            self.assertTrue(reply["data"]["available"])
+                            blocked = bridge.backup_panel_call("exec", command="echo unsafe")
+                            self.assertFalse(blocked["ok"])
+                        finally:
+                            server.shutdown()
+                            thread.join(timeout=3)
+            finally:
+                bridge.SOCKET = previous_socket
 
     def test_security_contract(self):
         dashboard = Path("src/dashboard.py").read_text()

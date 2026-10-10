@@ -446,6 +446,8 @@ PY
 }
 restore() {
   local f=$1 expected=${2:-} mode=${3:-interactive} tmp pre reply
+  exec 7>/run/wgdashbackup-restore.lock
+  flock -n 7 || { fail 'A full restore is already in progress.'; return 1; }
   need_install; ensure_dirs; mount_sources
   tmp=$(mktemp -d "$OUT/.restore.XXXXXXXX")
   resolve_archive "$f" "$tmp"

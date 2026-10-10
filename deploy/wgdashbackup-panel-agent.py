@@ -83,7 +83,8 @@ def status():
         interval = read_number("interval-minutes") or 30
         return {
             "available": True,
-            "configured": (CFG / "telegram.conf").is_file(),
+            "configured": (CFG / "telegram.conf").is_file() and
+                          (CFG / "telegram.conf").stat().st_size > 0,
             "enabled": is_enabled("wgdashbackup.timer"),
             "intervalMinutes": interval,
             "lastSuccessEpoch": read_number("last-success.epoch"),
