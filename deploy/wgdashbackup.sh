@@ -294,6 +294,21 @@ for p in dbs:
             src.backup(dst,pages=256,sleep=.1)
             if dst.execute('PRAGMA quick_check').fetchone()!=('ok',):
                 raise SystemExit('SQLite integrity check failed: '+str(p))
+            # Only compact the OFFLINE BACKUP SNAPSHOT, never the active DB.
+            # VACUUM removes freelist pages that have accumulated as peers
+            # are added/deleted. Skip small or non-bloated DBs to save CPU.
+            pages=dst.execute('PRAGMA page_count').fetchone()[0]
+            free_pages=dst.execute('PRAGMA freelist_count').fetchone()[0]
+            page_size=dst.execute('PRAGMA page_size').fetchone()[0]
+            if (pages and free_pages*page_size >= 16*1024*1024 and
+                    free_pages*10 >= pages and
+                    shutil.disk_usage(dest.parent).free >=
+                    dest.stat().st_size*2 + 1024*1024*1024):
+                before=dest.stat().st_size
+                dst.execute('VACUUM')
+                if dst.execute('PRAGMA quick_check').fetchone()!=('ok',):
+                    raise SystemExit('Compacted SQLite snapshot failed integrity check: '+str(p))
+                print('Backup-only SQLite compaction:',p.name,before,'->',dest.stat().st_size)
 print('SQLite snapshots checked:',len(dbs))
 PY
 }
@@ -323,7 +338,9 @@ backup() {
   printf 'UTC=%s\nImage=%s\n' "$(date -u +%FT%TZ)" "$(docker inspect -f '{{.Config.Image}}' "$CONTAINER")" > "$stage/manifest.txt"
   name="wgdashboard-$(date -u +%Y%m%d-%H%M%S).tar.gz"
   archive=$tmp/$name
-  tar -C "$stage" -czf "$archive" data etc compose.yaml manifest.txt $( [[ ! -e "$stage/.env" ]] || printf '%s' '.env' )
+  # Maximum portable gzip level; archive name and restore format unchanged.
+  # This may require more CPU but never rewrites the live SQLite database.
+  tar -C "$stage" -cf - data etc compose.yaml manifest.txt $( [[ ! -e "$stage/.env" ]] || printf '%s' '.env' ) | gzip -9 > "$archive"
   tar -tzf "$archive" >/dev/null
   sha=$(sha256sum "$archive" | cut -d' ' -f1)
   mv "$archive" "$OUT/$name"
@@ -339,6 +356,7 @@ backup() {
   for part in "${old[@]}"; do rm -f -- "$part" "$part.sha256"; done
 
   size=$(stat -c%s "$archive")
+  log "Compressed backup size: $size bytes (gzip -9, compatible tar.gz)"
   if (( size > 45000000 )); then
     split -b 45000000 -d -a 4 "$archive" "$tmp/$name.part-"
     shopt -s nullglob
