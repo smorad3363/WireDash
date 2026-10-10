@@ -265,20 +265,6 @@ elif ! exists; then
 else
   log 'already done: compose retained'
 fi
-# Mount a restricted Unix control socket into the panel, never the Docker
-# socket or any host backup directory. Existing Compose layouts are preserved.
-install -d -m 0700 /run/wgdashbackup-panel
-python3 - "$COMPOSE" <<'PY'
-import pathlib,sys
-p=pathlib.Path(sys.argv[1]); s=p.read_text()
-mount="      - /run/wgdashbackup-panel:/run/wgdashbackup-panel:ro"
-if mount not in s:
-    anchor="      - data:/data"
-    if s.count(anchor)!=1:
-        raise SystemExit("Cannot safely locate wgdashboard data mount for backup agent")
-    s=s.replace(anchor,anchor+"\n"+mount)
-    p.write_text(s)
-PY
 # Capture a checked local snapshot before changing an existing running deployment.
 snapshot() {
   local target=$1
@@ -352,6 +338,20 @@ path.write_text(''.join(lines))
 PY
   fi
 fi
+# Mount a restricted Unix control socket into the panel, never the Docker
+# socket or any host backup directory. Existing Compose layouts are preserved.
+install -d -m 0700 /run/wgdashbackup-panel
+python3 - "$COMPOSE" <<'PY'
+import pathlib,sys
+p=pathlib.Path(sys.argv[1]); s=p.read_text()
+mount="      - /run/wgdashbackup-panel:/run/wgdashbackup-panel:ro"
+if mount not in s:
+    anchor="      - data:/data"
+    if s.count(anchor)!=1:
+        raise SystemExit("Cannot safely locate wgdashboard data mount for backup agent")
+    s=s.replace(anchor,anchor+"\n"+mount)
+    p.write_text(s)
+PY
 step 6 'deploy image and verify running HTTP API'
 if ! docker compose -f "$COMPOSE" up -d --no-deps wgdashboard; then
   [[ -z "$old_compose" ]] || { cp -a "$old_compose" "$COMPOSE"; docker compose -f "$COMPOSE" up -d --no-deps wgdashboard || :; }
