@@ -122,6 +122,7 @@ export default {
 							       autocomplete="confirm-new-password"
 							       v-model="this.setup.repeatNewPassword"
 							       class="form-control" id="confirmPassword" name="confirmPassword" required>
+                        </div>
 							<div class="form-group text-body">
                             <label for="first-endpoint" class="mb-1 text-muted">
                                 <small>Peer Remote Endpoint — public IP or tunnel hostname (without port)</small>
