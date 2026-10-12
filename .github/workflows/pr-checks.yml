@@ -43,11 +43,15 @@ jobs:
         run: node tests/test_peer_qr_auth.mjs
       - name: UI-only peer bulk manager and unchanged API contract
         run: node tests/test_peer_bulk_manager.mjs
-      - name: Reject any backend API changes in bulk UI PR
+      - name: Reject all API endpoint or client changes in forward metering PR
         if: github.event_name == 'pull_request'
         run: |
           git fetch --no-tags --depth=1 origin ${{ github.event.pull_request.base.sha }}
-          git diff --exit-code FETCH_HEAD HEAD -- src/dashboard.py src/client.py src/modules/
+          git diff --exit-code FETCH_HEAD HEAD -- src/client.py
+          git show FETCH_HEAD:src/dashboard.py > /tmp/wiredash-api-before.py
+          python3 tests/test_api_surface.py /tmp/wiredash-api-before.py src/dashboard.py
+      - name: Forward-only metering and fresh/update/backup contracts
+        run: python3 tests/test_forward_metering.py
 
       - name: ShellCheck
         run: shellcheck -S warning install.sh deploy/wgdashbackup.sh deploy/wgd-watchdog.sh tests/smoke.sh tests/run_synthetic_benchmark.sh
