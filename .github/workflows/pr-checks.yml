@@ -41,6 +41,14 @@ jobs:
         run: python3 tests/test_wireguard_mtu.py
       - name: Peer QR and auth handling regression
         run: node tests/test_peer_qr_auth.mjs
+      - name: UI-only peer bulk manager and unchanged API contract
+        run: node tests/test_peer_bulk_manager.mjs
+      - name: Reject any backend API changes in bulk UI PR
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch --no-tags --depth=1 origin ${{ github.event.pull_request.base.sha }}
+          git diff --exit-code FETCH_HEAD HEAD -- src/dashboard.py src/client.py src/modules/
+
       - name: ShellCheck
         run: shellcheck -S warning install.sh deploy/wgdashbackup.sh deploy/wgd-watchdog.sh tests/smoke.sh tests/run_synthetic_benchmark.sh
       - name: Compose parse
