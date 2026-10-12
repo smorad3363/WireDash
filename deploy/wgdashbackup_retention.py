@@ -10,7 +10,8 @@ Manual imports, pre-restore safety snapshots, unuploaded snapshots, pending
 uploads, and arbitrary files are never targeted. The last local backup is
 retained if no qualifying noon backup exists yet.
 """
-from datetime import datetime
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
 import re
 import sys
@@ -19,9 +20,23 @@ AUTO = re.compile(r"^wgdashboard-(\d{8})-(\d{6})\.tar\.gz$")
 MAX_DAILY = 30
 
 
+def backup_zone():
+    """The same WGD_TZ as the managed panel, not the host machine clock."""
+    env = Path("/opt/wgdashboard/.env")
+    try:
+        for line in env.read_text().splitlines():
+            if line.startswith("WGD_TZ="):
+                return ZoneInfo(line.split("=", 1)[1].strip().strip('"'))
+    except (OSError, ValueError, KeyError):
+        pass
+    return datetime.now().astimezone().tzinfo
+
+
+
 def retention_plan(folder):
     root = Path(folder)
     sent = []
+    zone = backup_zone()
     if not root.is_dir():
         return []
     for path in root.iterdir():
@@ -31,7 +46,10 @@ def retention_plan(folder):
         if not Path(str(path) + ".sent").is_file():
             # Never remove a backup that has NOT been confirmed delivered.
             continue
-        dt = datetime.strptime(match[1] + match[2], "%Y%m%d%H%M%S")
+        # The archive name is UTC (date -u in wireback); evaluate the noon
+        # window in the panel's configured timezone.
+        dt = datetime.strptime(match[1] + match[2], "%Y%m%d%H%M%S").replace(
+            tzinfo=timezone.utc).astimezone(zone)
         sent.append((path, dt))
     if not sent:
         return []
