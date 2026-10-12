@@ -106,6 +106,12 @@ with tempfile.TemporaryDirectory() as tmp:
         quota=conn.execute(db.text("SELECT Value FROM PeerJobs WHERE JobID='quota-a'")).scalar()
     limit,weight=parse_quota_payload(quota)
     assert float(limit)==100 and float(weight)==2
+    # Persist the intervening 5 GB of traffic before changing the factor
+    # again. The real service refreshes WireGuard counters before cutover;
+    # an isolated SQLite fixture must advance those stored counters too.
+    with peers_engine.begin() as conn:
+        conn.execute(allowed.update().where(allowed.c.id=="alice").values(total_receive=15))
+        conn.execute(restricted.update().where(restricted.c.id=="bob").values(total_sent=6))
     pj.set_global_factor("3")
     approx(pj.metered_for("wg0","alice",15,0)["total"],20)
     approx(pj.metered_for("wg0","alice",17,0)["total"],26)
