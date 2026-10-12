@@ -119,4 +119,10 @@ jobs:
           done
           test "$docker_health" = 1
           docker exec -i wgdashboard python3 - /opt/wgdashboard/src/modules/PeerShareLinks.py < tests/check_patch.py
-          echo 'PASS: panel responds, Docker health=healthy and in-container patch is present'
+          # Real WireGuard validation inside the disposable PR container.
+          # Its conf is a fresh Docker volume and never contains production keys.
+          docker exec wgdashboard sh -ec '
+            grep -Eq "^[[:space:]]*MTU[[:space:]]*=[[:space:]]*1280[[:space:]]*$" /etc/wireguard/wg0.conf
+            ip -o link show dev wg0 | grep -Eq "[[:space:]]mtu[[:space:]]1280([[:space:]]|$)"
+          '
+          echo 'PASS: panel responds, Docker health=healthy, wg0 MTU=1280 and in-container patch is present'
