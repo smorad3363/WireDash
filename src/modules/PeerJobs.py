@@ -113,9 +113,9 @@ class PeerJobs:
             if job.Field == "quota_total_data":
                 limit, _ = parse_quota_payload(job.Value)
                 quotas.append((job.JobID, str(limit)))
-        # Persist the new per-peer factor and the frozen billing checkpoints.
-        self.ledger.change_many(transitions, self._weights, reason="global")
-        with self.engine.begin() as conn:
+        # Persist the factor epochs, PeerTrafficWeights and active quota
+        # rules atomically. A failure leaves the old state fully intact.
+        def apply_changes(conn):
             for config, pid, _r, _s, _factor in transitions:
                 update = conn.execute(self.weightsTable.update().where(db.and_(
                     self.weightsTable.c.Configuration == config,
@@ -127,6 +127,8 @@ class PeerJobs:
                 conn.execute(self.peerJobTable.update().where(
                     self.peerJobTable.c.JobID == job_id).values(
                         Value=quota_payload(limit, new_factor)))
+        self.ledger.change_many(transitions, self._weights,
+                                reason="global", update_callback=apply_changes)
         self.__getJobs()
         for c in self.WireguardConfigurations.values():
             for peer in c.getPeersList():
