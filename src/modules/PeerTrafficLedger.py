@@ -114,6 +114,37 @@ class PeerTrafficLedger:
         self._cache.update(staged)
         weights.update(staged_weights)
 
+    def stage_factor(self, conn, configuration, peer, received, sent,
+                     old_weight, new_weight, reason="job"):
+        """Stage a single job edit in the caller's existing SQLite transaction.
+
+        Caller must update _cache ONLY after the parent transaction commits,
+        otherwise quota jobs and billing epochs could diverge on DB failure.
+        """
+        factor = _valid_weight(new_weight)
+        key = (configuration, peer)
+        previous = self._cache.get(key)
+        if str(old_weight) == factor or (previous and str(previous["Factor"]) == factor):
+            return None
+        billed = self.totals(configuration, peer, received, sent, old_weight)
+        record = {
+            "Configuration": configuration, "Peer": peer,
+            "AnchorReceive": float(received), "AnchorSent": float(sent),
+            "BilledReceive": billed["receive"], "BilledSent": billed["sent"],
+            "Factor": factor, "ChangedAt": datetime.now()
+        }
+        updated = conn.execute(self.epochs.update().where(db.and_(
+            self.epochs.c.Configuration == configuration,
+            self.epochs.c.Peer == peer)).values(**record))
+        if updated.rowcount == 0:
+            conn.execute(self.epochs.insert().values(**record))
+        conn.execute(self.history.insert().values(**record, Reason=reason))
+        return record
+
+    def committed(self, record):
+        if record:
+            self._cache[(record["Configuration"], record["Peer"])] = record
+
     def reset(self, configuration, peer, received, sent, old_weight, mode):
         """An explicitly reset counter starts a NEW usage accounting epoch."""
         current = self.totals(configuration, peer, received, sent, old_weight)
