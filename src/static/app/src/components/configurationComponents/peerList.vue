@@ -18,7 +18,7 @@ const PeerSearchBar = defineAsyncComponent(() => import("@/components/configurat
 const PeerJobsAllModal = defineAsyncComponent(() => import("@/components/configurationComponents/peerJobsAllModal.vue"))
 const PeerJobsLogsModal = defineAsyncComponent(() => import("@/components/configurationComponents/peerJobsLogsModal.vue"))
 const EditConfigurationModal = defineAsyncComponent(() => import("@/components/configurationComponents/editConfiguration.vue"))
-const SelectPeersModal = defineAsyncComponent(() => import("@/components/configurationComponents/selectPeers.vue"))
+const PeerBulkManager = defineAsyncComponent(() => import("@/components/configurationComponents/peerListComponents/peerBulkManager.vue"))
 const PeerAddModal = defineAsyncComponent(() => import("@/components/configurationComponents/peerAddModal.vue"))
 
 const dashboardStore = DashboardConfigurationStore()
@@ -368,7 +368,7 @@ watch(() => route.query.id, (newValue) => {
 			@jobsAll="openBulkModal('peerScheduleJobsAll')"
 			@jobLogs="configurationModals.peerScheduleJobsLogs.modalOpen = true"
 			@editConfiguration="configurationModals.editConfiguration.modalOpen = true"
-			@selectPeers="openBulkModal('selectPeers')"
+			@selectPeers="configurationModals.selectPeers.modalOpen = true"
 			@backupRestore="configurationModals.backupRestore.modalOpen = true"
 			@deleteConfiguration="configurationModals.deleteConfiguration.modalOpen = true"
 			:configuration="configurationInfo">
@@ -442,12 +442,12 @@ watch(() => route.query.id, (newValue) => {
 			:configurationInfo="configurationInfo"
 			v-if="configurationModals.editConfiguration.modalOpen">
 		</EditConfigurationModal>
-		<SelectPeersModal
+		<PeerBulkManager
 			@refresh="fetchPeerList()"
 			v-if="configurationModals.selectPeers.modalOpen"
-			:configurationPeers="bulkPeers"
+			:configuration="configurationInfo"
 			@close="configurationModals.selectPeers.modalOpen = false"
-		></SelectPeersModal>
+		></PeerBulkManager>
 		<PeerDetailsModal
 			key="PeerDetailsModal"
 			v-if="configurationModals.peerDetails.modalOpen"
