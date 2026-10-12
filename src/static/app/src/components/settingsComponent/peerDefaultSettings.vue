@@ -2,6 +2,7 @@
 
 import LocaleText from "@/components/text/localeText.vue";
 import PeersDefaultSettingsInput from "@/components/settingsComponent/peersDefaultSettingsInput.vue";
+import PeerTrafficFactorDefault from "@/components/settingsComponent/peerTrafficFactorDefault.vue";
 </script>
 
 <template>
