@@ -160,8 +160,8 @@ const sorted=(sort,direction) => filterAndSortPeers(sortingPeers,
 assert.deepEqual(sorted("name","asc"), [...sorted("name","desc")].reverse());
 assert.equal(sorted("time_remaining","asc")[0],"time-exhausted");
 assert.equal(sorted("time_remaining","desc")[0],"both-limited");
-assert.deepEqual(sorted("time_remaining","desc").slice(-3).sort(),
-  ["closed-time","open-unlimited","traffic-exhausted"].sort());
+assert.deepEqual(sorted("time_remaining","desc").slice(-4).sort(),
+  ["closed-time","open-unlimited","quota-soon","traffic-exhausted"].sort());
 assert.deepEqual(sorted("traffic_remaining","asc").slice(0,3),
   ["traffic-exhausted","quota-soon","both-limited"]);
 assert.deepEqual(sorted("traffic_remaining","desc").slice(0,3),
