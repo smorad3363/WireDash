@@ -27,6 +27,7 @@ import PeerTrafficFactorDefault from "@/components/settingsComponent/peerTraffic
 						targetData="remote_endpoint" title="Peer Remote Endpoint"
 						:warning="true" warningText="This will be changed globally, and will be apply to all peer's QR code and configuration file."
 					></PeersDefaultSettingsInput>
+					<PeerTrafficFactorDefault />
 				</div>
 			</div>
 		</div>
