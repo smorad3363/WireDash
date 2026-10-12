@@ -1,5 +1,7 @@
 [Interface]
 Address = ${wg_net}/24
+# GRE-safe default for newly initialized persistent WireGuard volumes.
+MTU = 1280
 PrivateKey =
 PostUp = iptables -t nat -I POSTROUTING 1 -s ${wg_net}/24 -o ${out_adapt} -j MASQUERADE; iptables -I FORWARD -i wg0 -o wg0 -j DROP
 PreDown = iptables -t nat -D POSTROUTING -s ${wg_net}/24 -o ${out_adapt} -j MASQUERADE; iptables -D FORWARD -i wg0 -o wg0 -j DROP

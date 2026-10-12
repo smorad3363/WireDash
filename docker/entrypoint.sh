@@ -160,6 +160,12 @@ ensure_installation() {
   else
     echo "Existing wg0 configuration file found, using that."
   fi
+
+  # Persist only the MTU field in the Docker volume before wg0 can start.
+  # This intentionally leaves all existing private keys and peers untouched.
+  if [[ -n "${wg_default_mtu:-}" ]]; then
+    python3 /usr/local/libexec/ensure-wg-mtu.py "$wg_default_mtu" || exit 1
+  fi
 }
 
 set_envvars() {

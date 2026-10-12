@@ -16,11 +16,32 @@ Review-only invocation (same entrypoint, no system changes):
 curl -fsSL https://raw.githubusercontent.com/smorad3363/WireDash/main/install.sh | sudo bash -s -- --dry-run
 ```
 
-Options: `--port 10086`, `--tz Europe/Istanbul`, `--panel-bind 127.0.0.1`,
+Options: `--port 10086`, `--tz Europe/Istanbul`, `--panel-bind 127.0.0.1`, `--mtu 1280`,
 `--skip-backup`, `--skip-watchdog`, `--dry-run`, `--upgrade`, `--migrate`, `--uninstall`.
 The default web port is 10086/TCP; WireGuard is 51820/UDP.
 A regular invocation automatically updates WireDash-managed containers (same command). Upstream/unmanaged migration remains **explicit only**.
 `--uninstall` removes helper units, not containers, volumes, backups or keys.
+
+## GRE-friendly WireGuard MTU (persistent in Docker volume)
+
+Fresh installs now default to `MTU = 1280` in `/etc/wireguard/wg0.conf`. This is the interface MTU (not the per-peer MTU). On first container start the entrypoint copies the built-in `docker/wg0.conf.template` into the persistent `conf` volume and securely creates a private key. Before WGDashboard autostarts `wg0`, it applies the configured MTU field using a narrow, atomic editor. Existing private keys, peer blocks, addresses and firewall hooks are left unchanged. The file lives in the named Docker volume, so `docker restart wgdashboard`, host reboot and subsequent managed upgrades preserve it. The script never logs key material.
+
+To select an explicit MTU during fresh install (or change it on an existing managed install):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/smorad3363/WireDash/main/install.sh | sudo bash -s -- --mtu 1280
+```
+
+The normal canonical install command also uses **1280 on fresh installs**, without extra arguments. A saved `WGD_WG_MTU` setting in `/opt/wgdashboard/.env` is reused across future updates. Existing managed installations without this setting keep their original `wg0.conf` MTU unless you explicitly pass `--mtu`. This is not an automatic change to any existing VPN. MTU may be set from 1280 to 9000; pick a value appropriate for your underlying network.
+
+Verify after the panel and wg0 start:
+
+```bash
+docker exec wgdashboard ip link show wg0
+docker exec wgdashboard sh -c 'grep -iE "^[[:space:]]*MTU[[:space:]]*=" /etc/wireguard/wg0.conf'
+```
+
+Expected: `mtu 1280` on the interface and `MTU = 1280` in the persisted config. For GRE paths with additional encapsulation overhead, 1280 reduces fragmentation without changing the server's existing peer keys. It does not automatically change MTU within existing client configuration files. If `wg0` cannot start (for example, insufficient kernel capabilities), the installer reports a failed live-MTU check instead of claiming success.
 
 ## GitHub HTTPS / bootstrap failures
 
