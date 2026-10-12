@@ -3,10 +3,11 @@ import {computed, onMounted, ref, watch} from "vue";
 import {v4 as uuid} from "uuid";
 import {fetchGet, fetchPost} from "@/utilities/fetch.js";
 import {DEFAULT_SERVER_TIME_ZONE, filterAndSortPeers, peerPolicy, plannedJob, plannedFactorJob, validTimeZone} from "@/utilities/peerBulkPolicy.mjs";
-import {readTrafficFactor} from "@/utilities/peerTrafficDefaults.mjs";
+import {DashboardConfigurationStore} from "@/stores/DashboardConfigurationStore.js";
 import {renewRestrictedWithRestore} from "@/utilities/peerBulkRenewal.mjs";
 
 const props = defineProps({configuration: {type: Object, required: true}});
+const dashboardStore = DashboardConfigurationStore();
 const emit = defineEmits(["close", "refresh"]);
 const records = ref([]);
 const loadedAt = ref(0);
@@ -134,7 +135,7 @@ const openAction = name => {
   assumeWeightOne.value = false;
   temporaryAccessConsent.value = false;
   factorConsent.value = false;
-  factorValue.value = readTrafficFactor();
+  factorValue.value = Number(dashboardStore.Configuration?.Peers?.peer_traffic_factor ?? 1);
 };
 const cancelAction = () => {
   if (busy.value) return;
@@ -162,7 +163,7 @@ const renewalPreview = computed(() => {
       const result = action.value === "time"
         ? `New expiry: ${job.Value} (${serverTimeZone.value})`
         : action.value === "factor"
-          ? `Factor: ${peerPolicy(peer).weight}× → ${factorValue.value}× · quota stays ${JSON.parse(job.Value).limit_gb} GB · projected usage ${(Number(peer.metered_data || 0) * Number(factorValue.value) / peerPolicy(peer).weight).toFixed(2)} GB`
+          ? `Factor: ${peerPolicy(peer).weight}× → ${factorValue.value}× · quota stays ${JSON.parse(job.Value).limit_gb} GB · billed so far remains ${Number(peer.metered_data || 0).toFixed(2)} GB`
           : `New quota: ${JSON.parse(job.Value).limit_gb} metered GB · factor ${JSON.parse(job.Value).weight}`;
       return {id:peer.id, name:peer.name || peer.id, ok:true, result, restricted:!!peer.restricted};
     } catch(e) {
@@ -521,18 +522,19 @@ const executeAction = async () => {
             <template v-if="action === 'time' || action === 'traffic' || action === 'factor'">
               <div v-if="action === 'factor'" class="alert alert-warning small mb-0">
                 Changes the billing multiplier for EXISTING peers with supported active quota jobs.
-                Their existing GB quota stays unchanged; weighted usage can jump and the quota can
-                be exhausted immediately. Unlimited/no-quota peers cannot be changed by this API.
+                Their existing GB quota stays unchanged. Previously billed traffic is
+                frozen; only FUTURE traffic uses the new factor. Unlimited/no-quota
+                peers cannot be changed by this API.
                 Nothing is updated until Confirm.
               </div>
               <label v-if="action === 'factor'" class="small">
-                New traffic factor (0.1 – 10, from Peers Settings)
+                New traffic factor (0.1 – 10; overrides server default for selected peers)
                 <input class="form-control form-control-sm" type="number" min="0.1"
                   max="10" step="0.1" v-model.number="factorValue" :disabled="busy">
               </label>
               <label v-if="action === 'factor'" class="small d-flex gap-2 align-items-start">
                 <input type="checkbox" v-model="factorConsent" :disabled="busy">
-                I understand that changing the factor can immediately exhaust a user's existing quota.
+                I understand that only future traffic uses the new factor; past billed usage stays unchanged.
               </label>
               <label v-if="action !== 'factor'" class="small">
                 Server timezone (match the deployed WGD_TZ, not your browser timezone)
