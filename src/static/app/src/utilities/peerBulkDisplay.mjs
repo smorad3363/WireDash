@@ -47,7 +47,7 @@ export function peerDataBar(peer, policy) {
       policy.traffic === "expired");
   const quota = limited ? policy.quotaLimitGb : null;
   const noLimit = policy?.traffic === "unlimited";
-  const label = `${rounded(used)} | ${quota !== null ? rounded(quota) : noLimit ? "∞" : "?"}`;
+  const label = `${rounded(used)}|${quota !== null ? rounded(quota) : noLimit ? "∞" : "?"}`;
   const down = validUsage(peer?.metered_sent) ? peer.metered_sent : null;
   const up = validUsage(peer?.metered_receive) ? peer.metered_receive : null;
   const occupied = quota !== null && used !== null
@@ -70,6 +70,7 @@ export function peerDataBar(peer, policy) {
     details.push(`Remaining: ${rounded(Math.max(0,quota-used))} ${unit}`);
   return {
     label, details:details.join(" · "),
+    used, quota, hasQuota: quota !== null && used !== null,
     downloadPct, uploadPct, otherPct,
     state: quota !== null ? (used !== null && used >= quota ? "exhausted" :
       used !== null && used / quota >= 0.9 ? "warning" : "limited") :
