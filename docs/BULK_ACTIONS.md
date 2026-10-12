@@ -58,8 +58,9 @@ their precedence; when missing, server defaults to
 `Peers.peer_traffic_factor`. The response, endpoint, method and field
 names stay unchanged. Both admin creation forms OMIT the factor key,
 allowing the server to choose the default even for a quota-free peer.
-Legacy validation still rejects an explicit non-1 factor combined with
-quota=0. Existing bots that explicitly send 1 continue to get 1.
+Explicit factors now work with or without a quota; even unlimited
+users can have future traffic metered at the requested weight.
+Existing bots that explicitly send 1 continue to get 1.
 
 The optional **Bulk Manager → Has data quota → Set factor** can apply an
 explicit factor to selected peers with supported active quotas through the
