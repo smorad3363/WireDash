@@ -694,50 +694,69 @@ class WireguardConfiguration:
 
 
     def deletePeers(self, listOfPublicKeys, AllPeerJobs: PeerJobs, AllPeerShareLinks: PeerShareLinks) -> tuple[bool, str]:
-        numOfDeletedPeers = 0
-        numOfFailedToDeletePeers = 0
+        """Remove allowed AND already restricted peers via the unchanged API.
+
+        Restricted peers are stored in a separate SQLite table, and are NOT
+        present in self.Peers or in the live WireGuard interface. Never enable
+        them just to delete them. Validate before dereferencing .jobs; a stale
+        or missing selection must return a normal error, not HTTP 500.
+        """
         deleted = []
-        if not self.getStatus():
-            self.toggleConfiguration()
-        with self.engine.begin() as conn:
-            for p in listOfPublicKeys:
-                found, pf = self.searchPeer(p)
-                for job in pf.jobs:
+        failed = 0
+        active_changed = False
+        # Cache the restricted records ONCE for the current small API batch.
+        restricted = {peer.id: peer for peer in self.getRestrictedPeersList()}
+        for key in listOfPublicKeys:
+            allowed, peer = self.searchPeer(key)
+            if not allowed:
+                peer = restricted.get(key)
+            if peer is None:
+                failed += 1
+                continue
+            try:
+                # Do not alter the WireGuard interface for restricted users:
+                # they are already absent. Avoid bringing up a stopped VPN if
+                # the selected users are all restricted.
+                if allowed:
+                    if not self.getStatus():
+                        self.toggleConfiguration()
+                    subprocess.check_output(
+                        [self.Protocol, "set", self.Name, "peer", peer.id, "remove"],
+                        stderr=subprocess.STDOUT)
+                table = self.peersTable if allowed else self.peersRestrictedTable
+                with self.engine.begin() as conn:
+                    removed = conn.execute(
+                        table.delete().where(table.c.id == peer.id))
+                    if removed.rowcount != 1:
+                        raise RuntimeError("Selected peer is no longer in the expected table")
+                if allowed:
+                    active_changed = True
+                # Policy/share cleanup happens AFTER successful peer deletion.
+                # A deleted, restricted user is no longer in searchPeer().
+                for job in peer.jobs:
                     AllPeerJobs.deleteJob(job)
-                for shareLink in pf.ShareLink:
-                    AllPeerShareLinks.updateLinkExpireDate(shareLink.ShareID, datetime.now())
-                if found:
-                    try:
-                        subprocess.check_output(f"{self.Protocol} set {self.Name} peer {pf.id} remove",
-                                                shell=True, stderr=subprocess.STDOUT)
-                        conn.execute(
-                            self.peersTable.delete().where(
-                                self.peersTable.columns.id == pf.id
-                            )
-                        )
-                        deleted.append(pf.id)
-                        numOfDeletedPeers += 1
-                    except Exception as e:
-                        numOfFailedToDeletePeers += 1
-
-        if not self.__wgSave():
-            return False, "Failed to save configuration through WireGuard"
-
+                for share in peer.ShareLink:
+                    AllPeerShareLinks.updateLinkExpireDate(share.ShareID, datetime.now())
+                deleted.append(peer.id)
+            except Exception:
+                current_app.logger.exception("Could not delete selected peer")
+                failed += 1
+        # Save WireGuard only if a live peer was actually removed.
+        if active_changed and not self.__wgSave():
+            return False, "Could not save WireGuard configuration after deletion"
         if deleted:
             AllPeerJobs.forget_weights(self.Name, deleted)
         self.getPeers()
-        
-        if numOfDeletedPeers == 0 and numOfFailedToDeletePeers == 0:
-            return False, "No peer(s) to delete found"
-        
-        if numOfDeletedPeers == len(listOfPublicKeys):
-            self.DashboardWebHooks.RunWebHook("peer_deleted", {
-                "configuration": self.Name,
-                "peers": deleted
-            })
-            return True, f"Deleted {numOfDeletedPeers} peer(s)"
-        
-        return False, f"Deleted {numOfDeletedPeers} peer(s) successfully. Failed to delete {numOfFailedToDeletePeers} peer(s)"
+        self.getRestrictedPeers()
+        if not deleted and not failed:
+            return False, "No peer(s) selected"
+        if failed:
+            return False, f"Deleted {len(deleted)} peer(s); failed to delete {failed} peer(s). Refresh list before retry."
+        self.DashboardWebHooks.RunWebHook("peer_deleted", {
+            "configuration": self.Name,
+            "peers": deleted
+        })
+        return True, f"Deleted {len(deleted)} peer(s)"
 
     def __wgSave(self) -> tuple[bool, str] | tuple[bool, None]:
         try:
