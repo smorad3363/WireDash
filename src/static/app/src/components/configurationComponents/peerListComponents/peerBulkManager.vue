@@ -3,6 +3,7 @@ import {computed, onMounted, ref, watch} from "vue";
 import {v4 as uuid} from "uuid";
 import {fetchGet, fetchPost} from "@/utilities/fetch.js";
 import {DEFAULT_SERVER_TIME_ZONE, filterAndSortPeers, peerPolicy, plannedJob, validTimeZone} from "@/utilities/peerBulkPolicy.mjs";
+import {renewRestrictedWithRestore} from "@/utilities/peerBulkRenewal.mjs";
 
 const props = defineProps({configuration: {type: Object, required: true}});
 const emit = defineEmits(["close", "refresh"]);
@@ -252,51 +253,31 @@ const executeAction = async () => {
           report([id], false, "Limits or access changed since selection; skipped");
           continue;
         }
-        let opened = false, saved = false, failure = "", restored = true;
+        let saved = false, failure = "", restored = true;
         try {
-          // The existing /api/savePeerScheduleJob rejects restricted peers.
-          // Never silently claim renewal success. A restricted peer can be
-          // renewed through the OLD endpoints only by temporarily restoring
-          // access; require explicit opt-in, and restore restriction in finally.
           const job = plannedJob(peer, props.configuration.Name, action.value, value,
             new Date(), uuid, {
               serverTimeZone:serverTimeZone.value,
               assumeWeightOne:assumeWeightOne.value
             });
           if (peer.restricted) {
-            if (!temporaryAccessConsent.value) throw new Error("Temporary-access consent is required.");
-            opened = true; // Even a failed allow call can partially move a peer.
-            const allowed = await callPost(`/api/allowAccessPeers/${props.configuration.Name}`, {peers:[id]});
-            if (!allowed.status) throw new Error("Could not temporarily allow peer: " + (allowed.message || "request failed"));
+            const outcome = await renewRestrictedWithRestore({
+              id, configuration:props.configuration.Name, job,
+              consent:temporaryAccessConsent.value, post:callPost, get:callGet,
+              onRestoring:() => { progress.value = `Restoring restriction for ${i+1}/${ids.length}`; }
+            });
+            saved = outcome.saved;
+            restored = outcome.restored;
+            failure = outcome.error;
+          } else {
+            const response = await callPost("/api/savePeerScheduleJob", {Job:job});
+            saved = !!response.status;
+            if (!saved) failure = response.message || "Could not save policy job";
           }
-          const response = await callPost("/api/savePeerScheduleJob", {Job:job});
-          if (!response.status) throw new Error(response.message || "Could not save scheduled limit");
-          saved = true;
         } catch (e) {
           failure = e?.message || "Unable to renew this peer";
-        } finally {
-          if (opened) {
-            // Fail closed. Whether or not saving succeeded, restore the
-            // original restriction. Verify state independently after write.
-            progress.value = `Restoring restriction for ${i+1}/${ids.length}`;
-            try {
-              const beforeRestore = await callGet();
-              if (!beforeRestore?.status) {
-                // Cannot see current state: attempt restoration anyway.
-                await callPost(`/api/restrictPeers/${props.configuration.Name}`, {peers:[id]});
-              } else {
-                const isRestricted = beforeRestore.data.configurationRestrictedPeers.some(p => p.id === id);
-                if (!isRestricted)
-                  await callPost(`/api/restrictPeers/${props.configuration.Name}`, {peers:[id]});
-              }
-              const verified = await callGet();
-              restored = !!verified?.status &&
-                verified.data.configurationRestrictedPeers.some(p => p.id === id);
-            } catch { restored = false; }
-          }
         }
         if (!restored) {
-          failure = "CRITICAL: original restriction could not be verified. Check this peer immediately!";
           error.value = `CRITICAL: Restricted peer ${id} may have access. Verify access and re-restrict immediately.`;
         }
         report([id], saved && restored, failure || (peer.restricted
