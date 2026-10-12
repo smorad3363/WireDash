@@ -54,6 +54,9 @@ CONTAINER=wgdashboard
 PORT=10086
 TZ=Europe/Istanbul
 BIND=0.0.0.0
+# New installations default to a GRE-safe WireGuard interface MTU.
+WG_MTU=1280
+WG_MTU_GIVEN=0
 PORT_GIVEN=0
 TZ_GIVEN=0
 BIND_GIVEN=0
@@ -69,7 +72,7 @@ die() { echo "[wiredash] ERROR: $*" >&2; exit 1; }
 log() { echo "[wiredash] $*"; }
 usage() {
   cat <<EOF
-Usage: sudo bash install.sh [--port N] [--tz AREA/CITY] [--panel-bind IP]
+Usage: sudo bash install.sh [--port N] [--tz AREA/CITY] [--panel-bind IP] [--mtu N]
  [--skip-backup] [--skip-watchdog] [--dry-run] [--upgrade] [--migrate] [--uninstall]
 Revision: $WIREDASH_SOURCE_SHA (image $IMAGE). Same command for fresh installs and managed upgrades.
 EOF
@@ -79,6 +82,7 @@ while (($#)); do
     --port) (($# >= 2)) || die '--port needs value'; PORT=$2; PORT_GIVEN=1; shift 2 ;;
     --tz) (($# >= 2)) || die '--tz needs value'; TZ=$2; TZ_GIVEN=1; shift 2 ;;
     --panel-bind) (($# >= 2)) || die '--panel-bind needs value'; BIND=$2; BIND_GIVEN=1; shift 2 ;;
+    --mtu) (($# >= 2)) || die '--mtu needs value'; WG_MTU=$2; WG_MTU_GIVEN=1; shift 2 ;;
     --skip-backup) SKIP_BACKUP=1; shift ;;
     --skip-watchdog) SKIP_WATCHDOG=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
@@ -99,13 +103,19 @@ if [[ -f "$DEST/.env" ]]; then
   if ((PORT_GIVEN==0)); then PORT=$(read_setting WGD_PORT); PORT=${PORT:-10086}; fi
   if ((TZ_GIVEN==0)); then TZ=$(read_setting WGD_TZ); TZ=${TZ:-Europe/Istanbul}; fi
   if ((BIND_GIVEN==0)); then BIND=$(read_setting WGD_PANEL_BIND); BIND=${BIND:-0.0.0.0}; fi
+  # Existing managed deployments without this setting keep their old MTU.
+  if ((WG_MTU_GIVEN==0)); then WG_MTU=$(read_setting WGD_WG_MTU); fi
 fi
 [[ "$PORT" =~ ^[0-9]+$ ]] && ((PORT>=1 && PORT<=65535)) || die 'invalid TCP port'
 [[ "$TZ" =~ ^[a-zA-Z0-9_+/-]+$ ]] || die 'invalid timezone'
 [[ "$BIND" == 0.0.0.0 || "$BIND" == 127.0.0.1 ]] || die 'panel-bind must be 0.0.0.0 or 127.0.0.1'
+if [[ -n "$WG_MTU" ]]; then
+  [[ "$WG_MTU" =~ ^[0-9]{4}$ ]] && ((10#$WG_MTU >= 1280 && 10#$WG_MTU <= 9000)) ||
+    die 'WireGuard MTU must be an integer 1280..9000'
+fi
 (( UPGRADE+MIGRATE+UNINSTALL <= 1 )) || die 'choose only one of --upgrade, --migrate, --uninstall'
 if ((DRY_RUN)); then
-  log "DRY RUN: release=$VERSION image=$IMAGE port=$PORT bind=$BIND tz=$TZ"
+  log "DRY RUN: release=$VERSION image=$IMAGE port=$PORT bind=$BIND tz=$TZ wg0_mtu=${WG_MTU:-preserved}"
   log "Planned: preflight, tagged downloads, compose deployment, health+patch checks, backup and watchdog."
   log "Existing deployments never change without --upgrade or --migrate; no files/services modified."
   exit 0
@@ -174,6 +184,8 @@ verify_port() {
   [[ -z "$output" ]] || die "$mode port $port already in use; refusing to touch another listener"
 }
 step 2 'port and existing deployment checks'
+FRESH_INSTALL=0
+if ! exists; then FRESH_INSTALL=1; fi
 if ((UPGRADE)) && ! exists; then die '--upgrade requires an existing wgdashboard container'; fi
 if ((MIGRATE)) && ! exists; then die '--migrate requires an existing wgdashboard container'; fi
 # Do not overwrite an orphaned Compose deployment just because its container is missing.
@@ -265,7 +277,7 @@ elif exists && ((UPGRADE)); then
   log 'Upgrading managed deployment; preserving .env and volume names'
 elif ! exists; then
   install -m 600 "$STAGE/compose.yaml" "$COMPOSE"
-  printf 'WGD_PORT=%s\nWGD_TZ=%s\nWGD_PANEL_BIND=%s\n' "$PORT" "$TZ" "$BIND" > "$DEST/.env"
+  printf 'WGD_PORT=%s\nWGD_TZ=%s\nWGD_PANEL_BIND=%s\nWGD_WG_MTU=%s\n' "$PORT" "$TZ" "$BIND" "$WG_MTU" > "$DEST/.env"
 else
   log 'already done: compose retained'
 fi
@@ -318,10 +330,15 @@ PY
   log "Verified local pre-change snapshot: $target"
 }
 old_compose=""
+old_env=""
 if ((MIGRATE || UPGRADE)); then
   step 5 'take verified backup before deployment replacement'
   old_compose="$STAGE/previous-compose.yaml"
   cp -a "$COMPOSE" "$old_compose"
+  if [[ -f "$DEST/.env" ]]; then
+    old_env="$STAGE/previous.env"
+    cp -a "$DEST/.env" "$old_env"
+  fi
   snapshot "/var/backups/wgdashboard/pre-migrate-$(date -u +%Y%m%d-%H%M%S).tar.gz"
   # Upgrades preserve the existing Compose layout, mappings, volumes and settings.
   if ((MIGRATE || UPGRADE)); then
@@ -341,6 +358,40 @@ lines[i]=re.sub(r'^(    image:\s*).*(\r?\n)$',lambda m:m.group(1)+image+m.group(
 path.write_text(''.join(lines))
 PY
   fi
+fi
+# Explicit MTU overrides are persisted for existing managed installations.
+# On fresh installs the matching compose template already reads WGD_WG_MTU.
+if ((WG_MTU_GIVEN)) && ((FRESH_INSTALL == 0)); then
+  python3 - "$DEST/.env" "$WG_MTU" <<'PY'
+import pathlib,sys
+p=pathlib.Path(sys.argv[1]); value=sys.argv[2]
+lines=[l for l in p.read_text().splitlines() if not l.startswith("WGD_WG_MTU=")]
+lines.append("WGD_WG_MTU="+value)
+p.write_text("\\n".join(lines)+"\\n")
+PY
+  # Older managed Compose files may lack the env wiring, so add it only
+  # inside the wgdashboard environment mapping. No volume or key is touched.
+  python3 - "$COMPOSE" <<'PY'
+import pathlib,re,sys
+p=pathlib.Path(sys.argv[1])
+text=p.read_text()
+start=re.search(r"(?m)^  wgdashboard:[ \\t]*$",text)
+if not start:
+    raise SystemExit("Cannot find wgdashboard service for MTU wiring")
+next_svc=re.search(r"(?m)^  [A-Za-z0-9_-]+:[ \\t]*$",text[start.end():])
+end=start.end()+next_svc.start() if next_svc else len(text)
+section=text[start.end():end]
+if "wg_default_mtu:" not in section:
+    env=re.search(r"(?m)^    environment:[ \\t]*$",section)
+    if not env:
+        raise SystemExit("Cannot add MTU: wgdashboard environment mapping is missing")
+    following=section[env.end():]
+    if re.match(r"\\s*\\n[ \\t]*-",following):
+        raise SystemExit("Cannot add MTU to list-style environment safely")
+    insertion=start.end()+env.end()
+    text=text[:insertion]+'\\n      wg_default_mtu: "${WGD_WG_MTU:-}"'+text[insertion:]
+    p.write_text(text)
+PY
 fi
 # Mount a restricted Unix control socket into the panel, never the Docker
 # socket or any host backup directory. Existing Compose layouts are preserved.
@@ -376,8 +427,12 @@ then
   die 'Cannot add restricted backup socket mount; original Compose restored'
 fi
 step 6 'deploy image and verify running HTTP API'
+# On failure, preserve the original environment settings along with Compose.
+restore_saved_env() {
+  [[ -z "$old_env" ]] || cp -a "$old_env" "$DEST/.env"
+}
 if ! docker compose -f "$COMPOSE" up -d --no-deps wgdashboard; then
-  [[ -z "$old_compose" ]] || { cp -a "$old_compose" "$COMPOSE"; docker compose -f "$COMPOSE" up -d --no-deps wgdashboard || :; }
+  [[ -z "$old_compose" ]] || { cp -a "$old_compose" "$COMPOSE"; restore_saved_env; docker compose -f "$COMPOSE" up -d --no-deps wgdashboard || :; }
   die 'docker compose up failed (rolled back compose on upgrade/migration)'
 fi
 healthy=0
@@ -388,6 +443,7 @@ done
 if ((healthy==0)); then
   if [[ -n "$old_compose" ]]; then
     cp -a "$old_compose" "$COMPOSE"
+    restore_saved_env
     docker compose -f "$COMPOSE" up -d --no-deps wgdashboard || :
   fi
   die 'panel HTTP handshake failed after 180s; original compose restored when available'
@@ -395,9 +451,35 @@ fi
 if ! docker exec -i "$CONTAINER" python3 - /opt/wgdashboard/src/modules/PeerShareLinks.py < "$STAGE/check_patch.py"; then
   if [[ -n "$old_compose" ]]; then
     cp -a "$old_compose" "$COMPOSE"
+    restore_saved_env
     docker compose -f "$COMPOSE" up -d --no-deps wgdashboard || :
   fi
   die 'post-install patch assertion failed; previous image restored if applicable'
+fi
+# Verify the persistent config without ever printing the private key.
+if [[ -n "$WG_MTU" ]]; then
+  docker exec "$CONTAINER" python3 -c '
+import pathlib,re,sys
+s=pathlib.Path("/etc/wireguard/wg0.conf").read_text()
+a=re.split(r"(?m)^\\s*\\[Interface\\]\\s*$",s)
+assert len(a)==2, "wg0.conf missing [Interface]"
+interface=re.split(r"(?m)^\\s*\\[Peer\\]\\s*$",a[1])[0]
+assert re.search(r"(?mi)^\\s*MTU\\s*=\\s*"+re.escape(sys.argv[1])+r"\\s*$",interface), "wrong persisted MTU"
+' "$WG_MTU" || die "wg0.conf does not contain persistent MTU=$WG_MTU"
+  if ((FRESH_INSTALL || WG_MTU_GIVEN)); then
+    live_mtu=""
+    for ((i=0;i<15;i++)); do
+      link=$(docker exec "$CONTAINER" ip -o link show dev wg0 2>/dev/null || :)
+      if [[ "$link" =~ [[:space:]]mtu[[:space:]]([0-9]+) ]]; then
+        live_mtu=${BASH_REMATCH[1]}
+        [[ "$live_mtu" == "$WG_MTU" ]] && break
+      fi
+      sleep 2
+    done
+    [[ "$live_mtu" == "$WG_MTU" ]] ||
+      die "wg0 live MTU verification failed (observed ${live_mtu:-no interface}, expected $WG_MTU); check WireGuard autostart"
+    log "Verified wg0 live MTU=$WG_MTU and persistent /etc/wireguard/wg0.conf"
+  fi
 fi
 step 7 'install backup integration'
 if ((MIGRATE)) && [[ "$COMPOSE" != "$DEST/compose.yaml" ]] && [[ ! -e "$DEST/compose.yaml" ]]; then
