@@ -70,6 +70,15 @@ jobs:
           docker run --rm -v "$PWD/tests:/tests:ro" -e PYTHONPATH=/opt/wgdashboard/src -w /opt/wgdashboard/src \
             --entrypoint sh wiredash:pr-check -c \
             '/opt/wgdashboard/src/venv/bin/python3 /tests/test_performance_runtime.py'
+      - name: Forward metering SQLite integration after restart (isolated container)
+        run: |
+          docker run --rm --network none --read-only \
+            --tmpfs /tmp:rw,nosuid,nodev,size=64m \
+            -v "$PWD/tests:/tests:ro" \
+            -e PYTHONPATH=/opt/wgdashboard/src \
+            -w /opt/wgdashboard/src \
+            --entrypoint /opt/wgdashboard/src/venv/bin/python3 wiredash:pr-check \
+            /tests/test_forward_metering_runtime.py
       - name: Validate code baked into image
         run: docker run --rm -v "$PWD/tests:/tests:ro" --entrypoint python3 wiredash:pr-check /tests/check_patch.py /opt/wgdashboard/src/modules/PeerShareLinks.py
       - name: Check actual published UI and quota code in image
