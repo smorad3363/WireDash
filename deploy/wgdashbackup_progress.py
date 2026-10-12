@@ -14,6 +14,7 @@ import time
 FILE = Path("/run/wgdashbackup-panel/restore-progress.json")
 JOB = re.compile(r"^[a-f0-9]{12}$")
 STATES = frozenset(("queued", "running", "completed", "failed"))
+FINISHED_VISIBLE_SECONDS = 15 * 60
 PHASES = frozenset((
     "queued", "preparing", "verifying", "extracting",
     "stopping", "snapshotting", "applying", "starting",
@@ -33,6 +34,14 @@ def read_progress():
             type(data.get("percent")) is not int or
             not 0 <= data["percent"] <= 100):
         return None
+    # A successfully completed restore must not leave the big 100% banner
+    # pinned to Settings forever. Keep the root-only audit file intact, but
+    # hide terminal progress after a short window. In-flight jobs NEVER expire.
+    if data["state"] in ("completed", "failed"):
+        updated = data.get("updatedAt")
+        if (type(updated) is int and
+                int(time.time()) - updated >= FINISHED_VISIBLE_SECONDS):
+            return None
     return data
 
 
