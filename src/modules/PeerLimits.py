@@ -23,19 +23,19 @@ def _decimal(value, field):
     return number
 
 
-def parse_creation_limits(data):
+def parse_creation_limits(data, default_factor=1):
     """Return (days, quota_gb, weight), with zero meaning no limit."""
     days_raw = _decimal(data.get("duration_days", 0), "duration")
     if days_raw != days_raw.to_integral_value() or not 0 <= days_raw <= 3650:
         raise ValueError("Duration must be an integer from 0 to 3650 days")
     quota = _decimal(data.get("quota_gb", 0), "traffic quota")
-    weight = _decimal(data.get("traffic_factor", 1), "traffic weight")
+    weight = _decimal(data.get("traffic_factor", default_factor), "traffic weight")
     if not 0 <= quota <= MAX_QUOTA_GB:
         raise ValueError("Quota must be between 0 and 1000000 GB")
     if not MIN_WEIGHT <= weight <= MAX_WEIGHT:
         raise ValueError("Traffic weight must be between 0.1 and 10")
-    if quota == 0 and weight != 1:
-        raise ValueError("A traffic quota is required when adjusting metering")
+    # A global factor is meaningful even for unlimited users: it applies to
+    # metered counters and future quota rules, without inventing a quota.
     return int(days_raw), quota, weight
 
 
@@ -68,8 +68,10 @@ def metered_usage(received_gb, sent_gb, weight=1):
             "total": float(upload + download)}
 
 
-def quota_reached(received_gb, sent_gb, value):
+def quota_reached(received_gb, sent_gb, value, metered_total=None):
     quota, weight = parse_quota_payload(value)
     receive = _decimal(received_gb, "received usage")
     send = _decimal(sent_gb, "sent usage")
+    if metered_total is not None:
+        return _decimal(metered_total, "metered usage") >= quota
     return (receive + send) * weight >= quota
