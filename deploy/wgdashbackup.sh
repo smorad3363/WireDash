@@ -111,8 +111,17 @@ if response.get('ok') is not True:
 PY
 }
 install_timer() {
-  local minutes
+  local minutes panel_tz=''
   minutes=$(interval_minutes)
+  # The noon timer and the on-disk retention logic use the same configured
+  # panel timezone; archive filenames themselves remain in UTC.
+  if [[ -f /opt/wgdashboard/.env ]]; then
+    panel_tz=$(sed -n 's/^WGD_TZ=//p' /opt/wgdashboard/.env | tail -n 1)
+    [[ "$panel_tz" =~ ^[a-zA-Z0-9_+/-]+$ ]] || panel_tz=''
+    if [[ -n "$panel_tz" ]]; then
+      systemd-analyze calendar "*-*-* 12:00:00 $panel_tz" >/dev/null 2>&1 || panel_tz=''
+    fi
+  fi
   cat > "/etc/systemd/system/$UNIT.service" <<EOF
 [Unit]
 Description=Live WGDashboard SQLite backup and Telegram delivery
@@ -140,7 +149,7 @@ EOF
 [Unit]
 Description=Extra daily WireDash noon backup (server local time)
 [Timer]
-OnCalendar=*-*-* 12:00:00
+OnCalendar=*-*-* 12:00:00${panel_tz:+ $panel_tz}
 Persistent=true
 AccuracySec=1min
 Unit=$UNIT.service
