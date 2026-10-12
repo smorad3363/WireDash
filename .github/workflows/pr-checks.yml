@@ -83,6 +83,9 @@ jobs:
             grep -Rq "Could not load the peer configuration for QR" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
             grep -Rq "bulk-data-bar__label" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
             grep -Rq "Expired · Both" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
+            grep -Rq "Default traffic factor" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
+            grep -Rq "Set traffic factor" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
+            grep -Rq "Data used (GB)" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
             grep -Rq "Upload, verify" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
           '
       - name: Synthetic 5000 peers under 50 concurrent API clients
