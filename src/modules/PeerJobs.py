@@ -283,7 +283,14 @@ class PeerJobs:
                 )
                 self.JobLogger.log(Job.JobID, Message=f"Job is removed due to being deleted or finished.")
             self.__getJobs()
-            self.WireguardConfigurations.get(Job.Configuration).searchPeer(Job.Peer)[1].getJobs()
+            configuration = self.WireguardConfigurations.get(Job.Configuration)
+            if configuration is not None:
+                found, peer = configuration.searchPeer(Job.Peer)
+                if not found:
+                    peer = next((p for p in configuration.getRestrictedPeersList()
+                                 if p.id == Job.Peer), None)
+                if peer is not None:
+                    peer.getJobs()
             return True, None
         except Exception as e:
             return False, str(e)
