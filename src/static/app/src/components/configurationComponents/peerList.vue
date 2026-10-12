@@ -403,6 +403,7 @@ watch(() => route.query.id, (newValue) => {
 			@close="peerSearchBar = false"></PeerSearchBar>
 	</Transition>
 	<PeerListModals 
+		:configurationInfo="configurationInfo"
 		:configurationModals="configurationModals"
 		:configurationModalSelectedPeer="configurationModalSelectedPeer"
 		@refresh="fetchPeerList()"
