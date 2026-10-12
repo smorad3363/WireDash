@@ -19,28 +19,31 @@ export default {
 		ScheduleDropdown,
 	},
 	data(){
-		return {
-			
-		}
+		return {storeError:""}
 	},
 	methods:{
 		deleteJob(j){
 			this.selectedPeer.jobs = this.selectedPeer.jobs.filter(x => x.JobID !== j.JobID);
 		},
 		addJob(){
-			this.selectedPeer.jobs.unshift(JSON.parse(JSON.stringify({
-				JobID: v4().toString(),
-				Configuration: this.selectedPeer.configuration.Name,
-				Peer: this.selectedPeer.id,
-				Field: this.store.PeerScheduleJobs.dropdowns.Field[0].value,
-				Operator: this.store.PeerScheduleJobs.dropdowns.Operator[0].value,
-				Value: "",
-				CreationDate: "",
-				ExpireDate: "",
-				Action: this.store.PeerScheduleJobs.dropdowns.Action[0].value
-			}))
-			)
-		}
+            // The paginated peer-list/search API does not include a nested
+            // configuration object; use the validated route configuration.
+            const configuration = this.selectedPeer?.configuration?.Name || this.$route.params.id;
+            const choices = this.store.PeerScheduleJobs?.dropdowns;
+            if (!configuration || !this.selectedPeer?.id ||
+                !choices?.Field?.length || !choices?.Operator?.length ||
+                !choices?.Action?.length) {
+                this.storeError = "Could not initialize job. Reload the configuration.";
+                return;
+            }
+            this.storeError = "";
+            if (!Array.isArray(this.selectedPeer.jobs)) this.selectedPeer.jobs = [];
+            this.selectedPeer.jobs.unshift({
+                JobID:v4().toString(), Configuration:configuration, Peer:this.selectedPeer.id,
+                Field:choices.Field[0].value, Operator:choices.Operator[0].value,
+                Value:"", CreationDate:"", ExpireDate:null, Action:choices.Action[0].value
+            });
+        }
 	},
 	
 }
@@ -58,6 +61,7 @@ export default {
 						<button type="button" class="btn-close ms-auto" @click="this.$emit('close')"></button>
 					</div>
 					<div class="card-body px-4 pb-4 pt-2 position-relative">
+                        <div v-if="storeError" class="alert alert-warning small" role="alert">{{storeError}}</div>
 						<div class="d-flex align-items-center mb-3">
 							<button class="btn bg-primary-subtle border-1 border-primary-subtle text-primary-emphasis rounded-3 shadow" 
 							        
@@ -77,7 +81,7 @@ export default {
 							
 							<div class="card shadow-sm" key="none" 
 							     style="height: 153px"
-							     v-if="this.selectedPeer.jobs.length === 0">
+							     v-if="!this.selectedPeer.jobs || this.selectedPeer.jobs.length === 0">
 								<div class="card-body text-muted text-center d-flex">
 									<h6 class="m-auto">
 										<LocaleText t="This peer does not have any job yet."></LocaleText>

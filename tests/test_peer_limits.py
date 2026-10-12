@@ -33,11 +33,21 @@ class QuotaTest(unittest.TestCase):
         self.assertTrue(quota_reached(20, 30, quota_payload(100, 2)))
         self.assertEqual(metered_usage(20, 30, 1)["total"], 50)
 
+    def test_server_default_does_not_override_explicit_bot_weight(self):
+        self.assertEqual(parse_creation_limits({"quota_gb":10}, 2)[2], 2)
+        self.assertEqual(parse_creation_limits({"quota_gb":10, "traffic_factor":3}, 2)[2], 3)
+        self.assertEqual(parse_creation_limits({"traffic_factor":1}, 2)[2], 1)
+        self.assertEqual(parse_creation_limits({}, 2)[2], 2)
+        self.assertTrue(quota_reached(8, 0, quota_payload(10, 2),
+                                     metered_total=11))
+        self.assertFalse(quota_reached(8, 0, quota_payload(10, 2),
+                                      metered_total=9))
+
     def test_validate_bad_inputs(self):
         for data in [
             {"duration_days": -1}, {"duration_days": "1.5"}, {"duration_days": 9999},
             {"quota_gb": "nan"}, {"quota_gb": -2}, {"quota_gb": True},
-            {"traffic_factor": 2}, {"quota_gb": 20, "traffic_factor": 0},
+            {"quota_gb": 20, "traffic_factor": 0},
             {"quota_gb": 20, "traffic_factor": "Infinity"},
         ]:
             with self.subTest(data=data), self.assertRaises(ValueError):
@@ -47,8 +57,12 @@ class QuotaTest(unittest.TestCase):
         root = pathlib.Path("src/static/app/src/components/configurationComponents")
         for p in (root/"peerAddModal.vue", root/"peerCreate.vue"):
             content = p.read_text()
-            for key in ("duration_days", "quota_gb", "traffic_factor"):
+            for key in ("duration_days", "quota_gb"):
                 self.assertIn(key, content)
+            # Omission must let the server factor win; the client no longer
+            # freezes a browser-specific factor into new peer requests.
+            self.assertNotIn("traffic_factor:", content)
+            self.assertIn("peer_traffic_factor", content)
         jobs = pathlib.Path("src/modules/PeerJobs.py").read_text()
         self.assertIn("quota_reached(", jobs)
         self.assertIn("Traffic quota rule created", jobs)

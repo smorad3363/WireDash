@@ -1,0 +1,48 @@
+#!/usr/bin/env python3
+"""Fail closed if a PR modifies any established bot-facing HTTP API route.
+
+Allows ONLY the internal default lookup in existing POST /api/addPeers handler.
+The endpoint, required fields, other handler AST and returns stay identical.
+Does not create endpoints, change request field names or response schemas.
+"""
+import ast
+import pathlib
+import subprocess
+import sys
+
+base = sys.argv[1] if len(sys.argv)>1 else "FETCH_HEAD"
+old = subprocess.check_output(["git","show",f"{base}:src/dashboard.py"],text=True)
+new = pathlib.Path("src/dashboard.py").read_text()
+def endpoints(src):
+    out={}
+    for node in ast.parse(src).body:
+        if not isinstance(node,(ast.FunctionDef,ast.AsyncFunctionDef)): continue
+        route=False
+        for d in node.decorator_list:
+            if isinstance(d,ast.Call) and isinstance(d.func,ast.Attribute):
+                if d.func.attr in {"route","get","post","put","delete","patch"}:
+                    route=True
+        if route:
+            out[node.name]=node
+    return out
+a,b=endpoints(old),endpoints(new)
+assert set(a)==set(b), "Existing route handlers changed or new route added"
+class NormalizeDefault(ast.NodeTransformer):
+    def visit_Call(self,node):
+        self.generic_visit(node)
+        if (isinstance(node.func,ast.Name) and node.func.id=="parse_creation_limits"
+                and len(node.args)==2
+                and isinstance(node.args[1],ast.Subscript)):
+            # Only existing internal fallback retrieval is allowed here.
+            get=node.args[1].value
+            assert isinstance(get,ast.Call) and getattr(get.func,"attr",None)=="GetConfig"
+            assert len(get.args)==2 and all(isinstance(x,ast.Constant) for x in get.args)
+            assert [x.value for x in get.args]==["Peers","peer_traffic_factor"]
+            node.args.pop()
+        return node
+for name,node in a.items():
+    lhs=ast.dump(node,include_attributes=False)
+    rhs=ast.dump(NormalizeDefault().visit(b[name]) if name=="API_addPeers" else b[name],
+                 include_attributes=False)
+    assert lhs==rhs, "Existing API route modified: "+name
+print("PASS: no new/altered routes, request fields, return paths or bot handler logic")

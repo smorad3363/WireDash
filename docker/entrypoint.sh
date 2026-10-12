@@ -180,22 +180,18 @@ set_envvars() {
   fi
 
   echo "Checking basic configuration:"
-  set_ini Peers peer_global_dns "${global_dns}"
-
-  if [ -z "${public_ip}" ]; then
-    public_ip=$(curl -s https://ifconfig.me)
-    if [ -z "${public_ip}" ]; then
-        echo "Using fallback public IP resolution website"
-        public_ip=$(curl -s https://api.ipify.org)
-    fi
-    if [ -z "${public_ip}" ]; then
-        echo "Failed to resolve publicly. Using private address."
-        public_ip=$(hostname -i)
-    fi
-    echo "Automatically detected public IP: ${public_ip}"
+  # Preserve all existing Peers values on upgrades, restarts and restores.
+  # The first-start DashboardConfig defaults are used only if an INI entry is
+  # absent. Explicit values configured in the panel must never be overwritten.
+  if ! grep -Eiq '^[[:space:]]*peer_global_dns[[:space:]]*=' "${config_file}"; then
+    set_ini Peers peer_global_dns "${global_dns}"
   fi
-
-  set_ini Peers remote_endpoint "${public_ip}"
+  # Peer Remote Endpoint is collected during the existing first-login wizard.
+  # Only an explicit environment override may seed a MISSING fresh value.
+  if [[ -n "${public_ip}" ]] &&
+     ! grep -Eiq '^[[:space:]]*remote_endpoint[[:space:]]*=' "${config_file}"; then
+    set_ini Peers remote_endpoint "${public_ip}"
+  fi
   set_ini Server app_port "${wgd_port}"
 
   # Account settings - process all parameters

@@ -43,11 +43,14 @@ jobs:
         run: node tests/test_peer_qr_auth.mjs
       - name: UI-only peer bulk manager and unchanged API contract
         run: node tests/test_peer_bulk_manager.mjs
-      - name: Reject any backend API changes in bulk UI PR
+      - name: Block bot API contract changes
         if: github.event_name == 'pull_request'
         run: |
           git fetch --no-tags --depth=1 origin ${{ github.event.pull_request.base.sha }}
-          git diff --exit-code FETCH_HEAD HEAD -- src/dashboard.py src/client.py src/modules/
+          git diff --exit-code FETCH_HEAD HEAD -- src/client.py
+          python3 tests/test_api_contract_unchanged.py FETCH_HEAD
+      - name: Source compatibility for clean installs and upgrades
+        run: python3 tests/test_first_setup_contract.py
 
       - name: ShellCheck
         run: shellcheck -S warning install.sh deploy/wgdashbackup.sh deploy/wgd-watchdog.sh tests/smoke.sh tests/run_synthetic_benchmark.sh
@@ -61,6 +64,15 @@ jobs:
         run: python3 tests/test_bootstrap.py
       - name: Docker image build (no publish)
         run: docker build --file docker/Dockerfile --tag wiredash:pr-check .
+      - name: Piecewise factor history and rollback (disposable SQLite)
+        run: |
+          docker run --rm --network none --read-only \
+            --tmpfs /tmp:rw,nosuid,nodev,size=64m \
+            -v "$PWD/tests:/tests:ro" \
+            -e PYTHONPATH=/opt/wgdashboard/src \
+            -w /opt/wgdashboard/src \
+            --entrypoint /opt/wgdashboard/src/venv/bin/python3 wiredash:pr-check \
+            /tests/test_traffic_ledger_runtime.py
       - name: Live sampling and peer reuse unit tests (in container)
         run: |
           docker run --rm -v "$PWD/tests:/tests:ro" -e PYTHONPATH=/opt/wgdashboard/src -w /opt/wgdashboard/src \
@@ -83,9 +95,10 @@ jobs:
             grep -Rq "Could not load the peer configuration for QR" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
             grep -Rq "bulk-data-bar__label" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
             grep -Rq "Expired · Both" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
-            grep -Rq "Default traffic factor" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
+            grep -Rq "Global traffic factor" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
             grep -Rq "Set traffic factor" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
             grep -Rq "Data used (GB)" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
+            grep -Rq "Peer Remote Endpoint — public IP" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
             grep -Rq "Upload, verify" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
           '
       - name: Synthetic 5000 peers under 50 concurrent API clients

@@ -49,6 +49,12 @@ class SyntheticJobs:
         index = int(peer.rsplit("-", 1)[-1])
         return ("1", "1.5", "2")[index % 3]
 
+    def metered_for(self, configuration, peer, received, sent):
+        # Synthetic stub implements the same read API as the real factor ledger,
+        # without persistent factor events or any production data.
+        from modules.PeerLimits import metered_usage
+        return metered_usage(received, sent, self.weight_for(configuration, peer))
+
 
 class SyntheticLinks:
     def getLink(self, configuration, peer):

@@ -16,7 +16,6 @@ import PersistentKeepAliveInput
 	from "@/components/configurationComponents/newPeersComponents/persistentKeepAliveInput.vue";
 import {WireguardConfigurationsStore} from "@/stores/WireguardConfigurationsStore.js";
 import NotesInput from "./newPeersComponents/notesInput.vue";
-import {factorForCreation, readTrafficFactor} from "@/utilities/peerTrafficDefaults.mjs";
 
 const dashboardStore = DashboardConfigurationStore()
 const wireguardStore = WireguardConfigurationsStore()
@@ -25,7 +24,6 @@ const peerData = ref({
 	bulkAddAmount: 0,
 	duration_days: 0,
 	quota_gb: 0,
-	traffic_factor: 1,
 	name: "",
 	allowed_ips: [],
 	private_key: "",
@@ -70,15 +68,12 @@ const allRequireFieldsFilled = computed(() => {
 	}
 	const d = Number(peerData.value.duration_days);
 	const q = Number(peerData.value.quota_gb);
-	const f = Number(peerData.value.traffic_factor);
+	const f = Number(dashboardStore.Configuration.Peers.peer_traffic_factor || 1);
 	return status && Number.isInteger(d) && d >= 0 && d <= 3650
 		&& Number.isFinite(q) && q >= 0 && q <= 1000000
-		&& Number.isFinite(f) && f >= 0.1 && f <= 10 && (q > 0 || f === 1);
+		&& Number.isFinite(f) && f >= 0.1 && f <= 10  ;
 })
 
-watch(() => peerData.value.quota_gb, (quota) => {
-  peerData.value.traffic_factor = factorForCreation(quota, readTrafficFactor());
-})
 
 const peerCreate = () => {
 	saving.value = true
@@ -140,7 +135,7 @@ watch(() => {
       </div>
       <div class="col-md-4">
         <label class="form-label small">Traffic weight (from Settings)</label>
-        <div class="form-control form-control-sm bg-body-tertiary" aria-label="Traffic factor from Peers Settings">{{peerData.traffic_factor}}×</div>
+        <div class="form-control form-control-sm bg-body-tertiary" aria-label="Traffic factor from Peers Settings">{{dashboardStore.Configuration.Peers.peer_traffic_factor || 1}}×</div>
         <small class="text-muted">Change in Settings → Peers Settings.</small>
       </div>
     </div>

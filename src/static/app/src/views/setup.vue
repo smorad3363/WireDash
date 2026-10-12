@@ -17,39 +17,54 @@ export default {
 				repeatNewPassword: "",
 				enable_totp: true
 			},
+			remoteEndpoint: "",
 			loading: false,
 			errorMessage: "",
 			done: false
 		}
 	},
 	computed: {
+        validEndpoint(){
+            const host = this.remoteEndpoint.trim();
+            // The port is automatically appended from each tunnel config.
+            // Exclude schemes, whitespace, paths, and pasted ports.
+            return host.length > 0 && host.length <= 253 &&
+                /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9.-]{0,251}[a-zA-Z0-9])?|\\[[0-9a-fA-F:]+\\])$/.test(host) &&
+                !host.includes("..");
+        },
 		goodToSubmit(){
 			return this.setup.username 
 				&& this.setup.newPassword.length >= 8
 				&& this.setup.repeatNewPassword.length >= 8
 				&& this.setup.newPassword === this.setup.repeatNewPassword
+                && this.validEndpoint
 		}
 	},
 	methods: {
-		submit(){
-			this.loading = true
-			fetchPost("/api/Welcome_Finish", this.setup, (res) => {
-				if (res.status){
-					this.done = true;
-					this.$router.push('/2FASetup')
-				}else{
-					document.querySelectorAll("#createAccount input").forEach(x => x.classList.add("is-invalid"))
-					this.errorMessage = res.message;
-					document.querySelector(".login-container-fluid")
-						.scrollTo({
-							top: 0,
-							left: 0,
-							behavior: "smooth",
-						})
-				}
-				this.loading = false
-			})
-		}
+        async submit(){
+            if (!this.goodToSubmit || this.loading || this.done) return;
+            this.loading = true;
+            this.errorMessage = "";
+            try {
+                // Existing settings API, no extra Welcome_Finish fields.
+                // This page is only reached by FIRST-TIME welcome flow;
+                // upgrades/restores that completed setup are not prompted.
+                let address = null;
+                await fetchPost("/api/updateDashboardConfigurationItem", {
+                    section:"Peers", key:"remote_endpoint",
+                    value:this.remoteEndpoint.trim()
+                }, res => {address = res;});
+                if (!address?.status) throw new Error(address?.message || "Cannot save tunnel endpoint.");
+                let welcome = null;
+                await fetchPost("/api/Welcome_Finish", this.setup, res => {welcome = res;});
+                if (!welcome?.status) throw new Error(welcome?.message || "Cannot complete initial setup.");
+                this.done = true;
+                this.$router.push("/2FASetup");
+            } catch(e) {
+                this.errorMessage = e?.message || "Initial setup failed.";
+                document.querySelector(".login-container-fluid")?.scrollTo({top:0,behavior:"smooth"});
+            } finally { this.loading = false; }
+        }
 	}
 }
 </script>
@@ -107,7 +122,23 @@ export default {
 							       autocomplete="confirm-new-password"
 							       v-model="this.setup.repeatNewPassword"
 							       class="form-control" id="confirmPassword" name="confirmPassword" required>
-						</div>
+                        </div>
+							<div class="form-group text-body">
+                            <label for="first-endpoint" class="mb-1 text-muted">
+                                <small>Peer Remote Endpoint — public IP or tunnel hostname (without port)</small>
+                            </label>
+                            <input id="first-endpoint" type="text" class="form-control"
+                                v-model.trim="remoteEndpoint" placeholder="vpn.example.com"
+                                spellcheck="false" autocomplete="off" required>
+                            <small class="text-muted">
+                                Used in peer QR codes and downloadable configs. The server's
+                                WireGuard listening port is added automatically.
+                                Backups preserve this value on restores.
+                            </small>
+                            <div v-if="remoteEndpoint && !validEndpoint" class="small text-danger">
+                                Enter a hostname or IP only, without a protocol or port.
+                            </div>
+                        </div>
 					</form>
 <!--					<div class="form-check form-switch">-->
 <!--						<input class="form-check-input" type="checkbox" role="switch" id="enable_totp" -->
