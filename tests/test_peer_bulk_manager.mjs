@@ -297,10 +297,13 @@ assert.match(ui,/Has data quota/);
 const settings=readFileSync("src/static/app/src/components/settingsComponent/peerDefaultSettings.vue","utf8");
 const settingForm=readFileSync("src/static/app/src/components/settingsComponent/peerTrafficFactorDefault.vue","utf8");
 assert.match(settings,/PeerTrafficFactorDefault/);
-assert.match(settingForm,/this admin browser/);
+assert.match(settingForm,/server-wide/);
+assert.match(settingForm,/key:"peer_traffic_factor"/);
+assert.match(settingForm,/confirm.value/);
 for(const page of ["peerAddModal.vue","peerCreate.vue"]) {
   const created=readFileSync("src/static/app/src/components/configurationComponents/"+page,"utf8");
-  assert.match(created,/factorForCreation/);
+  assert.match(created,/peer_traffic_factor/);
+  assert.doesNotMatch(created,/traffic_factor:\\s*[0-9]/);
   assert.match(created,/Traffic weight \(from Settings\)/);
 }
 assert.match(ui,/toggleSort\('name'\)/);
