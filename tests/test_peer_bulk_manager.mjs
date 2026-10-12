@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
-import {DEFAULT_SERVER_TIME_ZONE, filterAndSortPeers, peerPolicy, plannedJob, validTimeZone}
+import {DEFAULT_SERVER_TIME_ZONE, filterAndSortPeers, peerPolicy, plannedJob, plannedFactorJob, validTimeZone}
   from "../src/static/app/src/utilities/peerBulkPolicy.mjs";
 import {renewRestrictedWithRestore} from "../src/static/app/src/utilities/peerBulkRenewal.mjs";
 import {peerDataBar, peerStatus, peerTimeLabel} from "../src/static/app/src/utilities/peerBulkDisplay.mjs";
+import {factorForCreation, readTrafficFactor, saveTrafficFactor, validTrafficFactor} from "../src/static/app/src/utilities/peerTrafficDefaults.mjs";
 
 // Browser running in UTC or Europe/Berlin must schedule the server's local wall
 // time (default Europe/Istanbul) identically.
@@ -136,13 +137,17 @@ const unrestricted=peer("unlimited",[],{raw:4});
 unrestricted.metered_receive=1;unrestricted.metered_sent=3;
 const infinity=peerDataBar(unrestricted,peerPolicy(unrestricted,now.getTime()));
 assert.equal(infinity.label,"4|∞");
-assert.equal(infinity.percent,0);
+assert.equal(infinity.percent,100);
+assert.equal(infinity.downloadPct,75);
+assert.equal(infinity.uploadPct,25);
+assert.match(infinity.details,/NOT percentage of a quota/);
 assert.equal(infinity.hasQuota,false);
 const historic=peer("historic",[],{raw:4,restricted:true});
 const unknown=peerDataBar(historic,peerPolicy(historic,now.getTime()));
 assert.equal(unknown.label,"4|?");
 assert.equal(unknown.state,"unknown");
-assert.equal(unknown.downloadPct,0);
+assert.equal(unknown.downloadPct,0); // Unknown raw breakdown, so fallback purple fill
+assert.equal(unknown.otherPct,100);
 assert.equal(unknown.hasQuota,false);
 const both=peer("both-expired",[dateJob(-1),trafficJob(5)],{raw:6});
 assert.deepEqual(peerStatus(peerPolicy(both,now.getTime())),
@@ -170,6 +175,43 @@ assert.equal(sorted("status","asc")[0],"time-exhausted");
 assert.equal(sorted("status","desc")[0],"open-unlimited");
 assert.equal(sorted("access","desc")[0],"traffic-exhausted");
 assert.equal(sorted("access","asc")[0],"both-limited");
+
+// DATA header sorts the visible number (metered USED GB), not nonexistent
+// remaining quota on unlimited users. Direction changes must reverse order.
+const sortingByUsage=[
+  peer("u-zero",[],{raw:0}),
+  peer("u-eight",[],{raw:8.3}),
+  peer("u-one",[],{raw:1.1}),
+  peer("u-nodata",[],{raw:0,restricted:true})
+];
+const usedOrder = direction => filterAndSortPeers(sortingByUsage,
+  {sort:"usage",direction},now.getTime()).map(x=>x.peer.id);
+assert.deepEqual(usedOrder("desc"),["u-eight","u-one","u-nodata","u-zero"]);
+assert.deepEqual(usedOrder("asc"),["u-nodata","u-zero","u-one","u-eight"]);
+
+// The new default preference is browser-only; actual usage rules are NOT
+// changed merely by saving this setting. The existing create-peers JSON still
+// requires factor=1 when the new user has NO quota.
+const local=new Map();
+const storage={getItem:k=>local.get(k)??null,setItem:(k,v)=>local.set(k,v)};
+assert.equal(readTrafficFactor(storage),1);
+assert.equal(saveTrafficFactor(2,storage),2);
+assert.equal(readTrafficFactor(storage),2);
+assert.equal(factorForCreation(20,readTrafficFactor(storage)),2);
+assert.equal(factorForCreation(0,readTrafficFactor(storage)),1);
+assert.ok(validTrafficFactor(0.1));
+assert.ok(validTrafficFactor(10));
+assert.equal(validTrafficFactor(10.1),false);
+assert.throws(()=>saveTrafficFactor(0,storage),/between/);
+const pWithQuota=peer("weighted",[trafficJob(20,1)],{raw:8});
+const weighted=plannedFactorJob(pWithQuota,"wg0",2);
+assert.equal(weighted.JobID,"quota-rule");
+assert.equal(JSON.parse(weighted.Value).limit_gb,"20");
+assert.equal(JSON.parse(weighted.Value).weight,"2");
+assert.equal(weighted.CreationDate,pWithQuota.jobs[0].CreationDate);
+assert.throws(()=>plannedFactorJob(sortingByUsage[1],"wg0",2),/No supported active quota/);
+assert.throws(()=>plannedFactorJob(pWithQuota,"wg0",12),/between/);
+assert.deepEqual(opt("quota_limited").sort(),["both-limited","quota-soon","traffic-exhausted"].sort());
 
 // Simulate old endpoints, including partial HTTP failures and a failed
 // access-restoration attempt. No live users, keys or network calls involved.
@@ -248,10 +290,23 @@ assert.match(flow,/CRITICAL: original restriction could not be verified/);
 assert.match(ui,/renewalPreview/);
 assert.match(ui,/serverTimeZone/);
 assert.match(ui,/maxOperation = 200/);
+assert.match(ui,/openAction\('factor'\)/);
+assert.match(ui,/plannedFactorJob/);
+assert.match(ui,/factorConsent/);
+assert.match(ui,/Has data quota/);
+const settings=readFileSync("src/static/app/src/components/settingsComponent/peerDefaultSettings.vue","utf8");
+const settingForm=readFileSync("src/static/app/src/components/settingsComponent/peerTrafficFactorDefault.vue","utf8");
+assert.match(settings,/PeerTrafficFactorDefault/);
+assert.match(settingForm,/this admin browser/);
+for(const page of ["peerAddModal.vue","peerCreate.vue"]) {
+  const created=readFileSync("src/static/app/src/components/configurationComponents/"+page,"utf8");
+  assert.match(created,/factorForCreation/);
+  assert.match(created,/Traffic weight \(from Settings\)/);
+}
 assert.match(ui,/toggleSort\('name'\)/);
 assert.match(ui,/toggleSort\('status'\)/);
 assert.match(ui,/toggleSort\('time_remaining'\)/);
-assert.match(ui,/toggleSort\('traffic_remaining'\)/);
+assert.match(ui,/toggleSort\('usage'\)/);
 assert.match(ui,/toggleSort\('access'\)/);
 assert.match(ui,/:aria-sort="ariaSort\('name'\)"/);
 assert.match(ui,/bulk-data-bar__label/);
