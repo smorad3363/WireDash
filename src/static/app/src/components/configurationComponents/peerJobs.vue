@@ -19,27 +19,36 @@ export default {
 		ScheduleDropdown,
 	},
 	data(){
-		return {
-			
-		}
-	},
+        return {
+            localJobs: Array.isArray(this.selectedPeer?.jobs) ? [...this.selectedPeer.jobs] : [],
+            addError: ""
+        }
+    },
 	methods:{
 		deleteJob(j){
-			this.selectedPeer.jobs = this.selectedPeer.jobs.filter(x => x.JobID !== j.JobID);
+			this.localJobs = this.localJobs.filter(x => x.JobID !== j.JobID);
 		},
 		addJob(){
-			this.selectedPeer.jobs.unshift(JSON.parse(JSON.stringify({
-				JobID: v4().toString(),
-				Configuration: this.selectedPeer.configuration.Name,
-				Peer: this.selectedPeer.id,
-				Field: this.store.PeerScheduleJobs.dropdowns.Field[0].value,
-				Operator: this.store.PeerScheduleJobs.dropdowns.Operator[0].value,
-				Value: "",
-				CreationDate: "",
-				ExpireDate: "",
-				Action: this.store.PeerScheduleJobs.dropdowns.Action[0].value
-			}))
-			)
+            // Paginated/search results intentionally omit peer.configuration.
+            // Resolve the parent configuration from the current page instead.
+            const configuration = String(this.$route?.params?.id ||
+                this.selectedPeer?.configuration?.Name || "");
+            const dropdowns = this.store.PeerScheduleJobs?.dropdowns;
+            if (!configuration || !this.selectedPeer?.id ||
+                !dropdowns?.Field?.length || !dropdowns?.Operator?.length ||
+                !dropdowns?.Action?.length) {
+                this.addError = "Cannot determine this peer's configuration. Reload the peer page.";
+                return;
+            }
+            this.addError = "";
+            this.localJobs.unshift({
+                JobID: v4(), Configuration: configuration, Peer: this.selectedPeer.id,
+                Field: dropdowns.Field[0].value,
+                Operator: dropdowns.Operator[0].value,
+                Value: "", CreationDate: "", ExpireDate: null,
+                Action: dropdowns.Action[0].value
+            });
+
 		}
 	},
 	
@@ -58,10 +67,11 @@ export default {
 						<button type="button" class="btn-close ms-auto" @click="this.$emit('close')"></button>
 					</div>
 					<div class="card-body px-4 pb-4 pt-2 position-relative">
-						<div class="d-flex align-items-center mb-3">
+						<div v-if="addError" class="alert alert-warning small" role="alert">{{addError}}</div>
+                        <div class="d-flex align-items-center mb-3">
 							<button class="btn bg-primary-subtle border-1 border-primary-subtle text-primary-emphasis rounded-3 shadow" 
 							        
-							        @click="this.addJob()">
+							        type="button" @click="this.addJob()">
 								<i class="bi bi-plus-lg me-2"></i>
 								<LocaleText t="Job"></LocaleText>
 							</button>
@@ -72,12 +82,12 @@ export default {
 								@delete="this.deleteJob(job)"
 								:dropdowns="this.store.PeerScheduleJobs.dropdowns"
 								:key="job.JobID"
-								:pjob="job" v-for="(job, index) in this.selectedPeer.jobs">
+								:pjob="job" v-for="job in this.localJobs">
 							</SchedulePeerJob>
 							
 							<div class="card shadow-sm" key="none" 
 							     style="height: 153px"
-							     v-if="this.selectedPeer.jobs.length === 0">
+							     v-if="this.localJobs.length === 0">
 								<div class="card-body text-muted text-center d-flex">
 									<h6 class="m-auto">
 										<LocaleText t="This peer does not have any job yet."></LocaleText>
