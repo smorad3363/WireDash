@@ -105,6 +105,7 @@ export function filterAndSortPeers(peers, {
       case "expired": return policy.time === EXPIRED || policy.traffic === EXPIRED;
       case "time_expired": return policy.time === EXPIRED;
       case "traffic_expired": return policy.traffic === EXPIRED;
+      case "quota_limited": return policy.quotaJob !== null;
       case "expiring_soon": return policy.time === "soon" || policy.traffic === "soon";
       case "unlimited": return !peer.restricted && policy.time === "unlimited" && policy.traffic === "unlimited";
       case "unlimited_time": return policy.time === "unlimited";
@@ -212,5 +213,28 @@ export function plannedJob(peer, configuration, action, amount, now = new Date()
     JobID:existing ? existing.JobID : newId(), Configuration:configuration,
     Peer:peer.id, Field:field, Operator:"lgt", Value:jobValue,
     CreationDate:existing?.CreationDate || "", ExpireDate:null, Action:"restrict"
+  };
+}
+
+// Update factor on an EXISTING quota job, preserving quota and job ID.
+// This is the legacy savePeerScheduleJob payload; no new backend feature.
+// No active quota => no safe API way to store weight without adding a limit.
+export function plannedFactorJob(peer, configuration, factor) {
+  const n = Number(factor);
+  if (!Number.isFinite(n) || n < 0.1 || n > 10)
+    throw new Error("Factor must be between 0.1 and 10.");
+  const policy = peerPolicy(peer);
+  if (!policy.quotaJob || policy.quotaLimitGb == null || policy.weight == null)
+    throw new Error("No supported active quota; create a quota manually before changing this peer's factor.");
+  // Defensive: ensure no second legacy/custom traffic rule overrides this one.
+  const active = activeRules(peer);
+  if (!active || active.filter(j => TRAFFIC_FIELDS.has(j.Field)).length !== 1)
+    throw new Error("Ambiguous data limits; edit manually.");
+  const source = policy.quotaJob;
+  return {
+    JobID: source.JobID, Configuration: configuration, Peer: peer.id,
+    Field: "quota_total_data", Operator: "lgt",
+    Value: JSON.stringify({limit_gb: String(policy.quotaLimitGb), weight: String(n)}),
+    CreationDate:source.CreationDate, ExpireDate:null, Action:"restrict"
   };
 }
