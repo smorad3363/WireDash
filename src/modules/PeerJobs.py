@@ -5,6 +5,7 @@ import sqlalchemy
 import uuid
 from datetime import timedelta
 from .PeerLimits import quota_payload, quota_reached, parse_quota_payload
+from .PeerTrafficLedger import PeerTrafficLedger, raw_traffic
 
 from .DatabaseConnection import ConnectionString
 from .PeerJob import PeerJob
@@ -36,6 +37,7 @@ class PeerJobs:
             db.Column('Weight', db.String(32), nullable=False),
         )
         self.metadata.create_all(self.engine)
+        self.ledger = PeerTrafficLedger(self.engine, self.metadata)
         self._weights = {}
         self._load_weights()
         self.__getJobs()
@@ -71,6 +73,67 @@ class PeerJobs:
     def weight_for(self, configuration, peer):
         return self._weights.get((configuration, peer), "1")
 
+    def metered_for(self, configuration, peer, received, sent):
+        return self.ledger.totals(configuration, peer, received, sent,
+                                  self.weight_for(configuration, peer))
+
+    def reset_metering(self, configuration, peer, received, sent, mode):
+        self.ledger.reset(configuration, peer, received, sent,
+                          self.weight_for(configuration, peer), mode)
+
+    def _current_counters(self, configuration, ids=None):
+        """Read DB counters, not potentially stale UI objects, for epoch anchors."""
+        c = self.WireguardConfigurations.get(configuration)
+        if c is None:
+            return {}
+        snapshot = {}
+        with c.engine.connect() as conn:
+            for table in (c.peersTable, c.peersRestrictedTable):
+                rows = conn.execute(table.select()).mappings().all()
+                for row in rows:
+                    if ids is None or row["id"] in ids:
+                        snapshot[row["id"]] = raw_traffic(row)
+        return snapshot
+
+    def set_global_factor(self, new_factor):
+        """Apply ONE new factor to all current peers without rebilling history.
+
+        Existing quota job payloads are updated internally to keep the stored
+        factor consistent. Endpoints, JSON field names and bot APIs are stable.
+        """
+        from decimal import Decimal
+        new_factor = str(Decimal(str(new_factor)))
+        transitions = []
+        quotas = []
+        for config in self.WireguardConfigurations:
+            for pid, (recv, sent) in self._current_counters(config).items():
+                transitions.append((config, pid, recv, sent, new_factor))
+        # Validate every active policy BEFORE touching the database.
+        for job in self.Jobs:
+            if job.Field == "quota_total_data":
+                limit, _ = parse_quota_payload(job.Value)
+                quotas.append((job.JobID, str(limit)))
+        # Persist the new per-peer factor and the frozen billing checkpoints.
+        self.ledger.change_many(transitions, self._weights, reason="global")
+        with self.engine.begin() as conn:
+            for config, pid, _r, _s, _factor in transitions:
+                update = conn.execute(self.weightsTable.update().where(db.and_(
+                    self.weightsTable.c.Configuration == config,
+                    self.weightsTable.c.Peer == pid)).values(Weight=new_factor))
+                if update.rowcount == 0:
+                    conn.execute(self.weightsTable.insert().values(
+                        Configuration=config, Peer=pid, Weight=new_factor))
+            for job_id, limit in quotas:
+                conn.execute(self.peerJobTable.update().where(
+                    self.peerJobTable.c.JobID == job_id).values(
+                        Value=quota_payload(limit, new_factor)))
+        self.__getJobs()
+        for c in self.WireguardConfigurations.values():
+            for peer in c.getPeersList():
+                peer.getJobs()
+            for peer in c.getRestrictedPeersList():
+                peer.getJobs()
+
     def forget_weights(self, configuration, peers):
         """Reset factor on deletion; retain tombstone to block historic backfill."""
         with self.engine.begin() as conn:
@@ -84,6 +147,7 @@ class PeerJobs:
                         Configuration=configuration, Peer=peer, Weight="1"))
         for peer in peers:
             self._weights[(configuration, peer)] = "1"
+        self.ledger.forget(configuration, peers)
 
     def __getJobs(self):
         self.Jobs.clear()
@@ -171,6 +235,13 @@ class PeerJobs:
                         conn.execute(self.weightsTable.insert().values(
                             Configuration=Job.Configuration, Peer=Job.Peer, Weight=str(weight)))
             if Job.Field == "quota_total_data":
+                old_weight = self.weight_for(Job.Configuration, Job.Peer)
+                if str(old_weight) != str(weight):
+                    counter = self._current_counters(Job.Configuration, {Job.Peer}).get(Job.Peer)
+                    if counter is not None:
+                        self.ledger.change_many(
+                            [(Job.Configuration, Job.Peer, *counter, str(weight))],
+                            self._weights, reason="job")
                 self._weights[(Job.Configuration, Job.Peer)] = str(weight)
             self.__getJobs()
             self.WireguardConfigurations.get(Job.Configuration).searchPeer(Job.Peer)[1].getJobs()
@@ -217,13 +288,14 @@ class PeerJobs:
                 (NewConfigurationName if c == ConfigurationName else c, p): value
                 for (c, p), value in self._weights.items()
             }
+            self.ledger.rename(ConfigurationName, NewConfigurationName)
             return True, None
         except Exception as e:
             return False, str(e)
     
     def provision_creation_limits(self, configuration, peer_ids, days, quota_gb, traffic_factor):
         """Create all policy jobs atomically; never record metering weights in logs."""
-        if not days and not quota_gb:
+        if not days and not quota_gb and float(traffic_factor) == 1:
             return True, None
         if not peer_ids:
             return False, "No created peers"
@@ -243,8 +315,9 @@ class PeerJobs:
                     })
         try:
             with self.engine.begin() as conn:
-                conn.execute(self.peerJobTable.insert(), records)
-                if quota_gb:
+                if records:
+                    conn.execute(self.peerJobTable.insert(), records)
+                if quota_gb or float(traffic_factor) != 1:
                     for peer in peer_ids:
                         updated = conn.execute(self.weightsTable.update().where(db.and_(
                             self.weightsTable.c.Configuration == configuration,
@@ -253,7 +326,7 @@ class PeerJobs:
                         if updated.rowcount == 0:
                             conn.execute(self.weightsTable.insert().values(
                                 Configuration=configuration, Peer=peer, Weight=str(traffic_factor)))
-            if quota_gb:
+            if quota_gb or float(traffic_factor) != 1:
                 for peer in peer_ids:
                     self._weights[(configuration, peer)] = str(traffic_factor)
             self.__getJobs()
@@ -294,7 +367,9 @@ class PeerJobs:
                             received = float(row["total_receive"] or 0) + float(row["cumu_receive"] or 0)
                             sent = float(row["total_sent"] or 0) + float(row["cumu_sent"] or 0)
                             if job.Field == "quota_total_data":
-                                runAction = quota_reached(received, sent, job.Value)
+                                billed = self.metered_for(job.Configuration, fp.id, received, sent)
+                                runAction = quota_reached(received, sent, job.Value,
+                                                          metered_total=billed["total"])
                             else:
                                 raw = {"total_receive": received, "total_sent": sent,
                                        "total_data": received + sent}[job.Field]
