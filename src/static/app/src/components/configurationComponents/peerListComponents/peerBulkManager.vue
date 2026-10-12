@@ -87,7 +87,7 @@ watch([query, statusFilter, sort, sortDirection, serverTimeZone], () => {page.va
 const toggleSort = key => {
   if (busy.value || action.value) return;
   if (sort.value === key) sortDirection.value = sortDirection.value === "asc" ? "desc" : "asc";
-  else {sort.value = key; sortDirection.value = "asc";}
+  else {sort.value = key; sortDirection.value = key === "usage" ? "desc" : "asc";}
 };
 const ariaSort = key => sort.value === key ?
   (sortDirection.value === "asc" ? "ascending" : "descending") : "none";
@@ -400,10 +400,10 @@ const executeAction = async () => {
                       <span class="bulk-sort-icon" aria-hidden="true">{{sortSymbol('time_remaining')}}</span>
                     </button>
                   </th>
-                  <th scope="col" :aria-sort="ariaSort('traffic_remaining')">
+                  <th scope="col" :aria-sort="ariaSort('usage')">
                     <button type="button" class="bulk-sort" :disabled="busy || !!action"
-                      @click="toggleSort('traffic_remaining')">Data (GB)
-                      <span class="bulk-sort-icon" aria-hidden="true">{{sortSymbol('traffic_remaining')}}</span>
+                      @click="toggleSort('usage')">Data used (GB)
+                      <span class="bulk-sort-icon" aria-hidden="true">{{sortSymbol('usage')}}</span>
                     </button>
                   </th>
                   <th scope="col" :aria-sort="ariaSort('access')">
