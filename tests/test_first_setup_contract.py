@@ -25,6 +25,10 @@ for k,v in {"peer_global_DNS":"1.1.1.1,8.8.8.8,9.9.9.9",
             "peer_traffic_factor":"1.0"}.items():
     assert ast.literal_eval(peers[k]) == v, (k,ast.dump(peers[k]))
 assert 'if not exist:' in dashboard and 'self.SetConfig(section, key, value, True)' in dashboard
+# A bare "1" is converted to bool True by GetConfig. Avoid that on save:
+# bot-created peers without traffic_factor must still get a numeric default.
+assert 'if "." not in new_factor:' in dashboard
+assert 'new_factor += ".0"' in dashboard
 entry=Path("docker/entrypoint.sh").read_text()
 assert "if ! grep -Eiq" in entry
 assert 'set_ini Peers remote_endpoint "${public_ip}"' in entry
