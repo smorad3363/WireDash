@@ -65,10 +65,10 @@ class Peer:
             self.ShareLink = [link for link in self.ShareLink if link.ExpireDate > now]
 
     def metered_usage(self):
-        weight = self.configuration.AllPeerJobs.weight_for(self.configuration.Name, self.id)
-        return metered_usage(
+        return self.configuration.AllPeerJobs.metered_for(
+            self.configuration.Name, self.id,
             (self.total_receive or 0) + (self.cumu_receive or 0),
-            (self.total_sent or 0) + (self.cumu_sent or 0), weight
+            (self.total_sent or 0) + (self.cumu_sent or 0)
         )
 
     def toJson(self):
@@ -295,6 +295,8 @@ class Peer:
         self.ShareLink = self.configuration.AllPeerShareLinks.getLink(self.configuration.Name, self.id)
 
     def resetDataUsage(self, mode: str):
+        previous_receive = (self.total_receive or 0) + (self.cumu_receive or 0)
+        previous_sent = (self.total_sent or 0) + (self.cumu_sent or 0)
         try:
             with self.configuration.engine.begin() as conn:
                 if mode == "total":
@@ -340,6 +342,11 @@ class Peer:
                     self.total_sent = 0
                 else:
                     return False
+            # Keep the ledger consistent with an explicit counter reset;
+            # otherwise future usage could be compared to the old anchor.
+            self.configuration.AllPeerJobs.reset_metering(
+                self.configuration.Name, self.id,
+                previous_receive, previous_sent, mode)
         except Exception as e:
             print(e)
             return False
