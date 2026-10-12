@@ -75,7 +75,7 @@ class PeerTrafficLedger:
         send = previous["BilledSent"] + sent_delta * factor
         return {"receive": recv, "sent": send, "total": recv + send}
 
-    def change_many(self, transitions, weights, reason="global"):
+    def change_many(self, transitions, weights, reason="global", update_callback=None):
         """Commit factor changes and their event history in ONE job-DB txn.
 
         transitions: (configuration, peer, receive, send, NEW factor).
@@ -109,6 +109,8 @@ class PeerTrafficLedger:
                 conn.execute(self.history.insert().values(**record, Reason=reason))
                 staged[key] = record
                 staged_weights[key] = factor
+            if update_callback is not None:
+                update_callback(conn)
         self._cache.update(staged)
         weights.update(staged_weights)
 
