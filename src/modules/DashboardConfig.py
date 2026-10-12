@@ -10,6 +10,7 @@ from flask import current_app
 from .DatabaseConnection import ConnectionString
 from .Utilities import (GetRemoteEndpoint, ValidateDNSAddress)
 from .DashboardAPIKey import DashboardAPIKey
+from .PeerMeterLedger import factor
 
 class DashboardConfig:
     DashboardVersion = 'v4.3.3'
@@ -21,6 +22,9 @@ class DashboardConfig:
             open(DashboardConfig.ConfigurationFilePath, "x")
         self.__config = configparser.RawConfigParser(strict=False)
         self.__config.read_file(open(DashboardConfig.ConfigurationFilePath, "r+"))
+        # Only a truly empty configuration gets the first-run Endpoint prompt.
+        # An older installed/restored panel keeps its existing endpoint.
+        first_install = len(self.__config.sections()) == 0
         self.hiddenAttribute = ["totp_key", "auth_req"]
         self.__default = {
             "Account": {
@@ -46,12 +50,13 @@ class DashboardConfig:
                 "dashboard_language": "en-US"
             },
             "Peers": {
-                "peer_global_DNS": "1.1.1.1",
+                "peer_global_DNS": "1.1.1.1,8.8.8.8,9.9.9.9",
                 "peer_endpoint_allowed_ip": "0.0.0.0/0",
                 "peer_display_mode": "grid",
-                "remote_endpoint": GetRemoteEndpoint(),
-                "peer_MTU": "1420",
-                "peer_keep_alive": "21"
+                "remote_endpoint": "" if first_install else GetRemoteEndpoint(),
+                "peer_MTU": "1280",
+                "peer_keep_alive": "21",
+                "peer_traffic_factor": "1.0"
             },
             "Other": {
                 "welcome_session": "true"
@@ -220,6 +225,24 @@ class DashboardConfig:
                 and section not in ['Email', 'WireGuardConfiguration'] and
                 (section == 'Peer' and key == 'peer_global_dns')):
             return False, "Field cannot be empty!"
+        if section == "Peers" and key == "peer_traffic_factor":
+            try:
+                factor(value)
+            except ValueError as e:
+                return False, str(e)
+        if section == "Peers" and key == "remote_endpoint":
+            if not isinstance(value, str) or not value.strip() or len(value) > 253:
+                return False, "Enter a public IP or DNS hostname (without port)."
+            endpoint = value.strip()
+            import re
+            candidate = endpoint[1:-1] if endpoint.startswith("[") and endpoint.endswith("]") else endpoint
+            try:
+                ipaddress.ip_address(candidate)
+            except ValueError:
+                if (not re.fullmatch(r"(?=.{1,253}$)[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?", candidate)
+                        or any(not label or len(label) > 63 or label.startswith("-")
+                               or label.endswith("-") for label in candidate.split("."))):
+                    return False, "Enter an IP address or hostname without a port or URL scheme."
         if section == "Peers" and key == "peer_global_dns" and len(value) > 0:
             return ValidateDNSAddress(value)
         if section == "Peers" and key == "peer_endpoint_allowed_ip":
