@@ -2,7 +2,8 @@
 import {computed, onMounted, ref, watch} from "vue";
 import {v4 as uuid} from "uuid";
 import {fetchGet, fetchPost} from "@/utilities/fetch.js";
-import {DEFAULT_SERVER_TIME_ZONE, filterAndSortPeers, peerPolicy, plannedJob, validTimeZone} from "@/utilities/peerBulkPolicy.mjs";
+import {DEFAULT_SERVER_TIME_ZONE, filterAndSortPeers, peerPolicy, plannedJob, plannedFactorJob, validTimeZone} from "@/utilities/peerBulkPolicy.mjs";
+import {readTrafficFactor} from "@/utilities/peerTrafficDefaults.mjs";
 import {renewRestrictedWithRestore} from "@/utilities/peerBulkRenewal.mjs";
 
 const props = defineProps({configuration: {type: Object, required: true}});
@@ -30,6 +31,8 @@ const chosenTag = ref("");
 const serverTimeZone = ref(DEFAULT_SERVER_TIME_ZONE);
 const assumeWeightOne = ref(false);
 const temporaryAccessConsent = ref(false);
+const factorValue = ref(1);
+const factorConsent = ref(false);
 const now = ref(Date.now());
 const filtered = computed(() => filterAndSortPeers(records.value,
   {query: query.value, status: statusFilter.value, sort: sort.value,
@@ -47,7 +50,7 @@ const selectedFiltered = computed(() =>
 const actionLabel = computed(() => ({
   restrict: "Restrict access", unrestrict: "Allow access",
   time: "Extend expiry", traffic: "Add traffic quota",
-  tag_add: "Add tag", tag_remove: "Remove tag", delete: "Delete peers"
+  tag_add: "Add tag", tag_remove: "Remove tag", factor:"Set traffic factor", delete: "Delete peers"
 })[action.value] || "");
 const tagOptions = computed(() => Object.entries(groups.value || {})
   .map(([id, item]) => ({id, name: item.GroupName || id})));
@@ -87,7 +90,7 @@ watch([query, statusFilter, sort, sortDirection, serverTimeZone], () => {page.va
 const toggleSort = key => {
   if (busy.value || action.value) return;
   if (sort.value === key) sortDirection.value = sortDirection.value === "asc" ? "desc" : "asc";
-  else {sort.value = key; sortDirection.value = "asc";}
+  else {sort.value = key; sortDirection.value = key === "usage" ? "desc" : "asc";}
 };
 const ariaSort = key => sort.value === key ?
   (sortDirection.value === "asc" ? "ascending" : "descending") : "none";
@@ -130,6 +133,8 @@ const openAction = name => {
   chosenTag.value = tagOptions.value[0]?.id || "";
   assumeWeightOne.value = false;
   temporaryAccessConsent.value = false;
+  factorConsent.value = false;
+  factorValue.value = readTrafficFactor();
 };
 const cancelAction = () => {
   if (busy.value) return;
@@ -144,17 +149,21 @@ const previewPeers = computed(() => {
 // All selected peers get a BEFORE/AFTER preview. An ambiguous policy
 // disables the write, rather than partially updating an unknown quota.
 const renewalPreview = computed(() => {
-  if (action.value !== "time" && action.value !== "traffic") return [];
+  if (action.value !== "time" && action.value !== "traffic" && action.value !== "factor") return [];
   return previewPeers.value.map(peer => {
     try {
-      const job = plannedJob(peer, props.configuration.Name, action.value,
-        amount.value, new Date(now.value), () => "preview", {
-          serverTimeZone:serverTimeZone.value,
-          assumeWeightOne:assumeWeightOne.value
-        });
+      const job = action.value === "factor"
+        ? plannedFactorJob(peer, props.configuration.Name, factorValue.value)
+        : plannedJob(peer, props.configuration.Name, action.value,
+            amount.value, new Date(now.value), () => "preview", {
+              serverTimeZone:serverTimeZone.value,
+              assumeWeightOne:assumeWeightOne.value
+            });
       const result = action.value === "time"
         ? `New expiry: ${job.Value} (${serverTimeZone.value})`
-        : `New quota: ${JSON.parse(job.Value).limit_gb} metered GB · factor ${JSON.parse(job.Value).weight}`;
+        : action.value === "factor"
+          ? `Factor: ${peerPolicy(peer).weight}× → ${factorValue.value}× · quota stays ${JSON.parse(job.Value).limit_gb} GB · projected usage ${(Number(peer.metered_data || 0) * Number(factorValue.value) / peerPolicy(peer).weight).toFixed(2)} GB`
+          : `New quota: ${JSON.parse(job.Value).limit_gb} metered GB · factor ${JSON.parse(job.Value).weight}`;
       return {id:peer.id, name:peer.name || peer.id, ok:true, result, restricted:!!peer.restricted};
     } catch(e) {
       return {id:peer.id, name:peer.name || peer.id, ok:false,
@@ -163,13 +172,15 @@ const renewalPreview = computed(() => {
   });
 });
 const restrictedRenewals = computed(() =>
-  (action.value === "time" || action.value === "traffic") &&
+  (action.value === "time" || action.value === "traffic" || action.value === "factor") &&
   previewPeers.value.some(p => p.restricted));
 const readyToExecute = computed(() => {
   if (!action.value || !confirmIds.value.length || busy.value) return false;
   if (action.value === "delete") return confirmation.value === `DELETE ${confirmIds.value.length}`;
-  if (action.value === "time" || action.value === "traffic") {
-    if (!validTimeZone(serverTimeZone.value) ||
+  if (action.value === "time" || action.value === "traffic" || action.value === "factor") {
+    if ((action.value !== "factor" && !validTimeZone(serverTimeZone.value)) ||
+      (action.value === "factor" && (!factorConsent.value || !Number.isFinite(Number(factorValue.value)) ||
+        Number(factorValue.value) < 0.1 || Number(factorValue.value) > 10)) ||
       renewalPreview.value.length !== confirmIds.value.length ||
       renewalPreview.value.some(p => !p.ok) ||
       (restrictedRenewals.value && !temporaryAccessConsent.value) ||
@@ -192,7 +203,7 @@ const callGet = async () => {
 };
 const classifyChanges = (initial, current, kind) => {
   // Concurrent edits to time/traffic policies must not be silently overwritten.
-  if (kind !== "time" && kind !== "traffic") return true;
+  if (kind !== "time" && kind !== "traffic" && kind !== "factor") return true;
   const a = peerPolicy(initial), b = peerPolicy(current);
   const key = kind === "time" ? "timeJob" : "quotaJob";
   return JSON.stringify(a[key] || null) === JSON.stringify(b[key] || null);
@@ -253,7 +264,7 @@ const executeAction = async () => {
         Name:props.configuration.Name, Key:"PeerGroups", Value:currentGroups
       });
       report(ids, !!response.status, response.message);
-    } else if (action.value === "time" || action.value === "traffic") {
+    } else if (action.value === "time" || action.value === "traffic" || action.value === "factor") {
       const original = new Map(records.value.map(p => [p.id, p]));
       const value = Number(amount.value);
       for (let i=0; i<ids.length; i++) {
@@ -266,11 +277,13 @@ const executeAction = async () => {
         }
         let saved = false, failure = "", restored = true;
         try {
-          const job = plannedJob(peer, props.configuration.Name, action.value, value,
-            new Date(), uuid, {
-              serverTimeZone:serverTimeZone.value,
-              assumeWeightOne:assumeWeightOne.value
-            });
+          const job = action.value === "factor"
+            ? plannedFactorJob(peer, props.configuration.Name, factorValue.value)
+            : plannedJob(peer, props.configuration.Name, action.value, value,
+                new Date(), uuid, {
+                  serverTimeZone:serverTimeZone.value,
+                  assumeWeightOne:assumeWeightOne.value
+                });
           if (peer.restricted) {
             const outcome = await renewRestrictedWithRestore({
               id, configuration:props.configuration.Name, job,
@@ -346,6 +359,7 @@ const executeAction = async () => {
                 <option value="unlimited">Unlimited</option>
                 <option value="unlimited_time">No time limit</option>
                 <option value="unlimited_traffic">No data limit</option>
+                <option value="quota_limited">Has data quota</option>
                 <option value="restricted">Restricted</option>
                 <option value="active">Active</option>
                 <option value="unknown">Needs review</option>
@@ -400,10 +414,10 @@ const executeAction = async () => {
                       <span class="bulk-sort-icon" aria-hidden="true">{{sortSymbol('time_remaining')}}</span>
                     </button>
                   </th>
-                  <th scope="col" :aria-sort="ariaSort('traffic_remaining')">
+                  <th scope="col" :aria-sort="ariaSort('usage')">
                     <button type="button" class="bulk-sort" :disabled="busy || !!action"
-                      @click="toggleSort('traffic_remaining')">Data (GB)
-                      <span class="bulk-sort-icon" aria-hidden="true">{{sortSymbol('traffic_remaining')}}</span>
+                      @click="toggleSort('usage')">Data used (GB)
+                      <span class="bulk-sort-icon" aria-hidden="true">{{sortSymbol('usage')}}</span>
                     </button>
                   </th>
                   <th scope="col" :aria-sort="ariaSort('access')">
@@ -479,6 +493,7 @@ const executeAction = async () => {
             <button type="button" class="btn btn-sm btn-outline-success" :disabled="!selected.length || busy || !!action" @click="openAction('unrestrict')">Allow access</button>
             <button type="button" class="btn btn-sm btn-outline-primary" :disabled="!selected.length || busy || !!action" @click="openAction('time')">Extend time</button>
             <button type="button" class="btn btn-sm btn-outline-primary" :disabled="!selected.length || busy || !!action" @click="openAction('traffic')">Add traffic</button>
+            <button type="button" class="btn btn-sm btn-outline-primary" :disabled="!selected.length || busy || !!action" @click="openAction('factor')">Set factor</button>
             <button type="button" class="btn btn-sm btn-outline-secondary" :disabled="!selected.length || busy || !!action || !tagOptions.length" @click="openAction('tag_add')">Add tag</button>
             <button type="button" class="btn btn-sm btn-outline-secondary" :disabled="!selected.length || busy || !!action || !tagOptions.length" @click="openAction('tag_remove')">Remove tag</button>
             <button type="button" class="btn btn-sm btn-outline-danger ms-auto" :disabled="!selected.length || busy || !!action" @click="openAction('delete')">Delete…</button>
@@ -503,8 +518,23 @@ const executeAction = async () => {
                 :max="action === 'time' ? 3650 : 1000000" :step="action === 'time' ? 1 : 0.1"
                 v-model.number="amount" :disabled="busy">
             </label>
-            <template v-if="action === 'time' || action === 'traffic'">
-              <label class="small">
+            <template v-if="action === 'time' || action === 'traffic' || action === 'factor'">
+              <div v-if="action === 'factor'" class="alert alert-warning small mb-0">
+                Changes the billing multiplier for EXISTING peers with supported active quota jobs.
+                Their existing GB quota stays unchanged; weighted usage can jump and the quota can
+                be exhausted immediately. Unlimited/no-quota peers cannot be changed by this API.
+                Nothing is updated until Confirm.
+              </div>
+              <label v-if="action === 'factor'" class="small">
+                New traffic factor (0.1 – 10, from Peers Settings)
+                <input class="form-control form-control-sm" type="number" min="0.1"
+                  max="10" step="0.1" v-model.number="factorValue" :disabled="busy">
+              </label>
+              <label v-if="action === 'factor'" class="small d-flex gap-2 align-items-start">
+                <input type="checkbox" v-model="factorConsent" :disabled="busy">
+                I understand that changing the factor can immediately exhaust a user's existing quota.
+              </label>
+              <label v-if="action !== 'factor'" class="small">
                 Server timezone (match the deployed WGD_TZ, not your browser timezone)
                 <input class="form-control form-control-sm" v-model.trim="serverTimeZone"
                   :disabled="busy" spellcheck="false" placeholder="Europe/Istanbul">

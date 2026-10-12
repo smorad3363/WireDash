@@ -50,10 +50,15 @@ export function peerDataBar(peer, policy) {
   const label = `${rounded(used)}|${quota !== null ? rounded(quota) : noLimit ? "∞" : "?"}`;
   const down = validUsage(peer?.metered_sent) ? peer.metered_sent : null;
   const up = validUsage(peer?.metered_receive) ? peer.metered_receive : null;
-  const occupied = quota !== null && used !== null
-    ? Math.min(100, Math.max(0, (used / quota) * 100)) : 0;
+  // With a quota: filled portion = billed usage / quota.
+  // WITHOUT a quota: the bar is a composition chart of already-used traffic,
+  // not a fabricated 100%-of-quota progress indicator. All used traffic is
+  // represented as blue download / teal upload proportions.
+  const occupied = used !== null && used > 0
+    ? quota !== null ? Math.min(100, Math.max(0, (used / quota) * 100)) : 100
+    : 0;
   let downloadPct = 0, uploadPct = 0, otherPct = occupied;
-  if (down !== null && up !== null && (down + up) > 0 && used !== null && used > 0) {
+  if (down !== null && up !== null && down + up > 0 && used !== null && used > 0) {
     const sum = down + up;
     downloadPct = occupied * Math.min(1, down / sum);
     uploadPct = occupied - downloadPct;
@@ -68,6 +73,8 @@ export function peerDataBar(peer, policy) {
   ];
   if (quota !== null && used !== null)
     details.push(`Remaining: ${rounded(Math.max(0,quota-used))} ${unit}`);
+  else if (occupied > 0)
+    details.push("Bar shows download/upload mix, NOT percentage of a quota");
   return {
     label, details:details.join(" · "),
     used, quota, hasQuota: quota !== null && used !== null,

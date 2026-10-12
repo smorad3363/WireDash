@@ -2,6 +2,7 @@
 
 import LocaleText from "@/components/text/localeText.vue";
 import PeersDefaultSettingsInput from "@/components/settingsComponent/peersDefaultSettingsInput.vue";
+import PeerTrafficFactorDefault from "@/components/settingsComponent/peerTrafficFactorDefault.vue";
 </script>
 
 <template>
@@ -26,6 +27,7 @@ import PeersDefaultSettingsInput from "@/components/settingsComponent/peersDefau
 						targetData="remote_endpoint" title="Peer Remote Endpoint"
 						:warning="true" warningText="This will be changed globally, and will be apply to all peer's QR code and configuration file."
 					></PeersDefaultSettingsInput>
+					<PeerTrafficFactorDefault />
 				</div>
 			</div>
 		</div>
