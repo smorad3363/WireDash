@@ -155,6 +155,7 @@ COPY ./docker/wg0.conf.template /tmp/wg0.conf.template
 COPY ./docker/wg-dashboard-oidc-providers.json.template /tmp/wg-dashboard-oidc-providers.json.template
 # Copy in the runtime script, essential.
 COPY ./docker/entrypoint.sh /entrypoint.sh
+COPY ./docker/ensure-wg-mtu.py /usr/local/libexec/ensure-wg-mtu.py
 
 # First WireGuard interface template
 RUN export out_adapt=$(ip -o -4 route show to default | awk '{print $NF}') \
