@@ -268,7 +268,9 @@ def send_archive(name, folder):
         chat_id = int(chat) if chat.lstrip("-").isdigit() else None
     chat_username = intro_chat.get("username", "")
     if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{4,31}", str(chat_username)):
-        chat_username = chat[1:] if chat.startswith("@") else None
+        candidate = chat[1:] if chat.startswith("@") else ""
+        chat_username = candidate if re.fullmatch(
+            r"[A-Za-z][A-Za-z0-9_]{4,31}", candidate) else None
     files = []
     for start in range(0, len(parts), 10):
         batch = parts[start:start + 10]
