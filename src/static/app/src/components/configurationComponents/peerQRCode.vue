@@ -7,7 +7,8 @@ export default {
 	name: "peerQRCode",
 	components: {LocaleText},
 	props: {
-		selectedPeer: Object
+		selectedPeer: Object,
+		configurationInfo: Object
 	},
 	setup(){
 		const dashboardStore = DashboardConfigurationStore();
@@ -36,13 +37,13 @@ export default {
 				}
 			};
 			try {
-				if (this.selectedPeer.configuration.Protocol === "awg") {
+				if (this.configurationInfo.Protocol === "awg") {
 					const awgQRCodeObject = {
 						containers: [{
 							awg: {
 								isThirdPartyConfig: true,
 								last_config: res.data.file,
-								port: this.selectedPeer.configuration.ListenPort,
+								port: this.configurationInfo.ListenPort,
 								transport_proto: "udp"
 							},
 							container: "amnezia-awg"
@@ -86,10 +87,10 @@ export default {
 										style="width: 200px !important; height: 200px !important;"
 										class="rounded-3 shadow animate__animated animate__fadeIn animate__faster qrcode"
 										:class="{'d-none': loading}"></canvas>
-								<LocaleText t="Scan with WireGuard App" class="text-muted" v-if='this.selectedPeer.configuration.Protocol === "wg"'></LocaleText>
-								<LocaleText t="Scan with AmneziaWG App" class="text-muted" v-if='this.selectedPeer.configuration.Protocol === "awg"'></LocaleText>
+								<LocaleText t="Scan with WireGuard App" class="text-muted" v-if='this.configurationInfo.Protocol === "wg"'></LocaleText>
+								<LocaleText t="Scan with AmneziaWG App" class="text-muted" v-if='this.configurationInfo.Protocol === "awg"'></LocaleText>
 							</div>
-							<div v-if='!errorMessage && this.selectedPeer.configuration.Protocol === "awg"' class="d-flex flex-column gap-2 align-items-center">
+							<div v-if='!errorMessage && this.configurationInfo.Protocol === "awg"' class="d-flex flex-column gap-2 align-items-center">
 								<canvas id="awg_vpn_qrcode" class="rounded-3 shadow animate__animated animate__fadeIn animate__faster  qrcode"
 										:class="{'d-none': loading}"></canvas>
 								<LocaleText t="Scan with AmneziaVPN App" class="text-muted"></LocaleText>
