@@ -2,7 +2,8 @@
 import {defineAsyncComponent} from "vue";
 const props = defineProps({
 	configurationModals: Object,
-	configurationModalSelectedPeer: Object
+	configurationModalSelectedPeer: Object,
+	configurationInfo: Object
 })
 const emits = defineEmits(["refresh"])
 
@@ -27,6 +28,7 @@ const PeerDetailsModal = defineAsyncComponent(() => import("@/components/configu
 		</PeerSettingsModal>
 		<PeerQRCodeModal
 			key="PeerQRCodeModal"
+			:configurationInfo="configurationInfo"
 			v-if="configurationModals.peerQRCode.modalOpen"
 			:selectedPeer="configurationModalSelectedPeer"
 			@close="configurationModals.peerQRCode.modalOpen = false">
