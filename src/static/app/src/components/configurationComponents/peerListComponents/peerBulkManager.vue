@@ -18,6 +18,7 @@ const progress = ref("");
 const query = ref("");
 const statusFilter = ref("all");
 const sort = ref("name");
+const sortDirection = ref("asc");
 const page = ref(1);
 const perPage = 50;
 const selected = ref([]);
@@ -32,7 +33,7 @@ const temporaryAccessConsent = ref(false);
 const now = ref(Date.now());
 const filtered = computed(() => filterAndSortPeers(records.value,
   {query: query.value, status: statusFilter.value, sort: sort.value,
-    serverTimeZone: serverTimeZone.value}, now.value));
+    direction: sortDirection.value, serverTimeZone: serverTimeZone.value}, now.value));
 const pageCount = computed(() => Math.max(1, Math.ceil(filtered.value.length / perPage)));
 const visible = computed(() => filtered.value.slice((page.value - 1) * perPage, page.value * perPage));
 const chosenPeers = computed(() => {
@@ -81,7 +82,17 @@ const refresh = async () => {
 };
 onMounted(refresh);
 
-watch([query, statusFilter, sort, serverTimeZone], () => {page.value = 1;});
+watch([query, statusFilter, sort, sortDirection, serverTimeZone], () => {page.value = 1;});
+// Table headers are the only sort controls. Re-click to reverse; one active sort.
+const toggleSort = key => {
+  if (busy.value || action.value) return;
+  if (sort.value === key) sortDirection.value = sortDirection.value === "asc" ? "desc" : "asc";
+  else {sort.value = key; sortDirection.value = "asc";}
+};
+const ariaSort = key => sort.value === key ?
+  (sortDirection.value === "asc" ? "ascending" : "descending") : "none";
+const sortSymbol = key => sort.value !== key ? "↕" :
+  sortDirection.value === "asc" ? "▲" : "▼";
 watch(pageCount, total => { if (page.value > total) page.value = total; });
 
 const toggle = (id, enabled) => {
@@ -330,25 +341,14 @@ const executeAction = async () => {
               <span class="small text-muted">Status</span>
               <select class="form-select form-select-sm" v-model="statusFilter" :disabled="busy || !!action">
                 <option value="all">All peers</option>
-                <option value="expired">Time OR traffic expired</option>
-                <option value="time_expired">Time expired</option>
-                <option value="traffic_expired">Traffic exhausted</option>
-                <option value="expiring_soon">Expiring soon (3 days / 1 GB)</option>
-                <option value="unlimited">No active time/traffic limit</option>
-                <option value="unlimited_time">No active time limit</option>
-                <option value="unlimited_traffic">No active traffic limit</option>
-                <option value="restricted">Access restricted</option>
-                <option value="active">Not restricted or expired</option>
-                <option value="unknown">Unknown/legacy or restricted-expired history</option>
-              </select>
-            </label>
-            <label class="flex-grow-1" style="min-width: 155px">
-              <span class="small text-muted">Sort</span>
-              <select class="form-select form-select-sm" v-model="sort" :disabled="busy || !!action">
-                <option value="name">Name</option>
-                <option value="time_remaining">Time remaining (ascending)</option>
-                <option value="traffic_remaining">Traffic remaining (ascending)</option>
-                <option value="usage">Highest metered usage</option>
+                <option value="expired">Expired</option>
+                <option value="expiring_soon">Expiring soon</option>
+                <option value="unlimited">Unlimited</option>
+                <option value="unlimited_time">No time limit</option>
+                <option value="unlimited_traffic">No data limit</option>
+                <option value="restricted">Restricted</option>
+                <option value="active">Active</option>
+                <option value="unknown">Needs review</option>
               </select>
             </label>
             <button type="button" class="btn btn-sm btn-outline-secondary align-self-end"
@@ -377,38 +377,91 @@ const executeAction = async () => {
             <span class="ms-auto text-muted" v-else>Showing {{visible.length}} / {{filtered.length}} matches</span>
           </div>
 
-          <div class="table-responsive border rounded-3" style="max-height: 37vh; overflow-y: auto;">
-            <table class="table table-sm table-hover align-middle mb-0" aria-label="Bulk peer selection">
+          <div class="table-responsive border rounded-3 bulk-table-scroll" style="max-height: 37vh; overflow-y: auto;">
+            <table class="table table-sm table-hover align-middle mb-0 bulk-table" aria-label="Bulk peer selection">
               <thead class="sticky-top">
                 <tr>
-                  <th style="width: 40px"></th><th>Peer</th><th>Access</th><th>Time</th><th>Traffic</th>
+                  <th scope="col" class="bulk-check-col"></th>
+                  <th scope="col" :aria-sort="ariaSort('name')">
+                    <button type="button" class="bulk-sort" :disabled="busy || !!action"
+                      @click="toggleSort('name')">User
+                      <span class="bulk-sort-icon" aria-hidden="true">{{sortSymbol('name')}}</span>
+                    </button>
+                  </th>
+                  <th scope="col" :aria-sort="ariaSort('status')">
+                    <button type="button" class="bulk-sort" :disabled="busy || !!action"
+                      @click="toggleSort('status')">Status
+                      <span class="bulk-sort-icon" aria-hidden="true">{{sortSymbol('status')}}</span>
+                    </button>
+                  </th>
+                  <th scope="col" :aria-sort="ariaSort('time_remaining')">
+                    <button type="button" class="bulk-sort" :disabled="busy || !!action"
+                      @click="toggleSort('time_remaining')">Time
+                      <span class="bulk-sort-icon" aria-hidden="true">{{sortSymbol('time_remaining')}}</span>
+                    </button>
+                  </th>
+                  <th scope="col" :aria-sort="ariaSort('traffic_remaining')">
+                    <button type="button" class="bulk-sort" :disabled="busy || !!action"
+                      @click="toggleSort('traffic_remaining')">Data (GB)
+                      <span class="bulk-sort-icon" aria-hidden="true">{{sortSymbol('traffic_remaining')}}</span>
+                    </button>
+                  </th>
+                  <th scope="col" :aria-sort="ariaSort('access')">
+                    <button type="button" class="bulk-sort" :disabled="busy || !!action"
+                      @click="toggleSort('access')">Access
+                      <span class="bulk-sort-icon" aria-hidden="true">{{sortSymbol('access')}}</span>
+                    </button>
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-for="item in visible" :key="item.peer.id">
-                  <td><input type="checkbox" :checked="selected.includes(item.peer.id)"
-                    :disabled="busy || !!action"
-                    :aria-label="'Select '+(item.peer.name || item.peer.id)"
-                    @change="toggle(item.peer.id, $event.target.checked)"></td>
                   <td>
-                    <div class="fw-semibold">{{item.peer.name || 'Untitled Peer'}}</div>
-                    <small class="text-muted font-monospace">{{item.peer.id.slice(0, 20)}}…</small>
+                    <input type="checkbox" :checked="selected.includes(item.peer.id)"
+                      :disabled="busy || !!action"
+                      :aria-label="'Select '+(item.peer.name || item.peer.id)"
+                      @change="toggle(item.peer.id, $event.target.checked)">
                   </td>
-                  <td><small>{{item.peer.restricted ? 'Restricted' : 'Allowed'}}</small></td>
                   <td>
-                    <small v-if="item.policy.timeRemainingDays !== null">
-                      {{item.policy.time === 'expired' ? 'Expired' : item.policy.timeRemainingDays.toFixed(1) + ' days left'}}
+                    <div class="fw-semibold bulk-user-name">{{item.peer.name || 'Untitled Peer'}}</div>
+                    <small class="text-muted d-block bulk-user-detail"
+                      :title="'Peer: '+item.peer.id+' · Last handshake: '+(item.peer.latest_handshake || 'N/A')">
+                      {{item.peer.allowed_ip || item.peer.id.slice(0, 18) + '…'}}
                     </small>
-                    <small v-else>{{item.policy.time}}</small>
                   </td>
                   <td>
-                    <small v-if="item.policy.trafficRemainingGb !== null">
-                      {{item.policy.traffic === 'expired' ? 'Exhausted' : item.policy.trafficRemainingGb.toFixed(2) + ' GB left'}}
-                    </small>
-                    <small v-else>{{item.policy.traffic}}</small>
+                    <span class="bulk-status" :class="'bulk-status--'+item.summary.key"
+                      :title="item.summary.key === 'review' ? 'The old API cannot reveal the reason for a completed restriction; review manually.' : item.summary.label">
+                      {{item.summary.label}}
+                    </span>
                   </td>
+                  <td>
+                    <small class="bulk-time" :title="item.policy.deadline !== null
+                      ? 'Expiry (server time): '+new Date(item.policy.deadline).toISOString().slice(0,19).replace('T',' ')+' · '+serverTimeZone
+                      : 'No reliable active time limit date'">
+                      {{item.timeLabel}}
+                    </small>
+                  </td>
+                  <td>
+                    <div class="bulk-data-bar" :class="'bulk-data-bar--'+item.dataBar.state"
+                      :role="item.dataBar.hasQuota ? 'progressbar' : 'img'"
+                      :aria-valuemin="item.dataBar.hasQuota ? 0 : undefined"
+                      :aria-valuemax="item.dataBar.hasQuota ? item.dataBar.quota : undefined"
+                      :aria-valuenow="item.dataBar.hasQuota ? item.dataBar.used : undefined"
+                      :aria-label="item.dataBar.details" :title="item.dataBar.details">
+                      <div class="bulk-data-bar__segments" aria-hidden="true">
+                        <span class="bulk-data-bar__download" :style="{width:item.dataBar.downloadPct+'%'}"></span>
+                        <span class="bulk-data-bar__upload" :style="{width:item.dataBar.uploadPct+'%'}"></span>
+                        <span class="bulk-data-bar__other" :style="{width:item.dataBar.otherPct+'%'}"></span>
+                      </div>
+                      <span class="bulk-data-bar__label" aria-hidden="true">{{item.dataBar.label}}</span>
+                    </div>
+                  </td>
+                  <td><small :class="item.peer.restricted ? 'text-danger-emphasis' : 'text-success-emphasis'">
+                    {{item.peer.restricted ? 'Restricted' : 'Allowed'}}
+                  </small></td>
                 </tr>
-                <tr v-if="!visible.length"><td colspan="5" class="text-center text-muted py-3">No peers match the selected filter.</td></tr>
+                <tr v-if="!visible.length"><td colspan="6" class="text-center text-muted py-3">No matching peers.</td></tr>
               </tbody>
             </table>
           </div>
