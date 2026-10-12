@@ -9,14 +9,10 @@ tree = ast.parse(dashboard)
 klass = next(x for x in tree.body if isinstance(x, ast.ClassDef) and x.name == "DashboardConfig")
 ctor = next(x for x in klass.body if isinstance(x, ast.FunctionDef) and x.name == "__init__")
 defaults = next(x.value for x in ast.walk(ctor) if isinstance(x, ast.Assign)
-                and any(isinstance(t, ast.Attribute) and t.attr == "_DashboardConfig__default"
+                and any(isinstance(t, ast.Attribute) and t.attr == "__default"
                         for t in x.targets))
 # AST is generated from a private attribute; the source defaults are tested
 # without instantiating DashboardConfig or touching real databases.
-values = ast.literal_eval(ast.Dict(
-    keys=[x for x in defaults.keys if isinstance(x, ast.Constant) and x.value != "Peers"],
-    values=[v for k,v in zip(defaults.keys,defaults.values)
-            if not (isinstance(k,ast.Constant) and k.value=="Peers")])) if False else None
 def peer_items(node):
     for k,v in zip(node.keys,node.values):
         if isinstance(k,ast.Constant) and k.value=="Peers":
