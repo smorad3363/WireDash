@@ -105,7 +105,11 @@ class PeerJobs:
         new_factor = str(Decimal(str(new_factor)))
         transitions = []
         quotas = []
-        for config in self.WireguardConfigurations:
+        for config, tunnel in self.WireguardConfigurations.items():
+            # Capture a fresh read of live WireGuard counters before freezing
+            # the previous factor. Never start a stopped tunnel just for this.
+            if tunnel.getStatus():
+                tunnel.getPeersTransfer()
             for pid, (recv, sent) in self._current_counters(config).items():
                 transitions.append((config, pid, recv, sent, new_factor))
         # Validate every active policy BEFORE touching the database.
