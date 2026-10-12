@@ -2,7 +2,8 @@
 import {computed, onMounted, ref, watch} from "vue";
 import {v4 as uuid} from "uuid";
 import {fetchGet, fetchPost} from "@/utilities/fetch.js";
-import {filterAndSortPeers, peerPolicy, plannedJob} from "@/utilities/peerBulkPolicy.mjs";
+import {DEFAULT_SERVER_TIME_ZONE, filterAndSortPeers, peerPolicy, plannedJob, validTimeZone} from "@/utilities/peerBulkPolicy.mjs";
+import {renewRestrictedWithRestore} from "@/utilities/peerBulkRenewal.mjs";
 
 const props = defineProps({configuration: {type: Object, required: true}});
 const emit = defineEmits(["close", "refresh"]);
@@ -25,9 +26,13 @@ const confirmIds = ref([]);
 const confirmation = ref("");
 const amount = ref(10);
 const chosenTag = ref("");
+const serverTimeZone = ref(DEFAULT_SERVER_TIME_ZONE);
+const assumeWeightOne = ref(false);
+const temporaryAccessConsent = ref(false);
 const now = ref(Date.now());
 const filtered = computed(() => filterAndSortPeers(records.value,
-  {query: query.value, status: statusFilter.value, sort: sort.value}, now.value));
+  {query: query.value, status: statusFilter.value, sort: sort.value,
+    serverTimeZone: serverTimeZone.value}, now.value));
 const pageCount = computed(() => Math.max(1, Math.ceil(filtered.value.length / perPage)));
 const visible = computed(() => filtered.value.slice((page.value - 1) * perPage, page.value * perPage));
 const chosenPeers = computed(() => {
@@ -76,7 +81,7 @@ const refresh = async () => {
 };
 onMounted(refresh);
 
-watch([query, statusFilter, sort], () => {page.value = 1;});
+watch([query, statusFilter, sort, serverTimeZone], () => {page.value = 1;});
 watch(pageCount, total => { if (page.value > total) page.value = total; });
 
 const toggle = (id, enabled) => {
@@ -112,6 +117,8 @@ const openAction = name => {
   confirmation.value = "";
   amount.value = 10;
   chosenTag.value = tagOptions.value[0]?.id || "";
+  assumeWeightOne.value = false;
+  temporaryAccessConsent.value = false;
 };
 const cancelAction = () => {
   if (busy.value) return;
@@ -123,13 +130,41 @@ const previewPeers = computed(() => {
   const ids = new Set(confirmIds.value);
   return records.value.filter(p => ids.has(p.id));
 });
+// All selected peers get a BEFORE/AFTER preview. An ambiguous policy
+// disables the write, rather than partially updating an unknown quota.
+const renewalPreview = computed(() => {
+  if (action.value !== "time" && action.value !== "traffic") return [];
+  return previewPeers.value.map(peer => {
+    try {
+      const job = plannedJob(peer, props.configuration.Name, action.value,
+        amount.value, new Date(now.value), () => "preview", {
+          serverTimeZone:serverTimeZone.value,
+          assumeWeightOne:assumeWeightOne.value
+        });
+      const result = action.value === "time"
+        ? `New expiry: ${job.Value} (${serverTimeZone.value})`
+        : `New quota: ${JSON.parse(job.Value).limit_gb} metered GB · factor ${JSON.parse(job.Value).weight}`;
+      return {id:peer.id, name:peer.name || peer.id, ok:true, result, restricted:!!peer.restricted};
+    } catch(e) {
+      return {id:peer.id, name:peer.name || peer.id, ok:false,
+        result:e?.message || "Invalid policy", restricted:!!peer.restricted};
+    }
+  });
+});
+const restrictedRenewals = computed(() =>
+  (action.value === "time" || action.value === "traffic") &&
+  previewPeers.value.some(p => p.restricted));
 const readyToExecute = computed(() => {
   if (!action.value || !confirmIds.value.length || busy.value) return false;
   if (action.value === "delete") return confirmation.value === `DELETE ${confirmIds.value.length}`;
-  if (action.value === "time") return Number.isInteger(Number(amount.value)) &&
-    Number(amount.value) > 0 && Number(amount.value) <= 3650;
-  if (action.value === "traffic") return Number(amount.value) > 0 &&
-    Number.isFinite(Number(amount.value)) && Number(amount.value) <= 1000000;
+  if (action.value === "time" || action.value === "traffic") {
+    if (!validTimeZone(serverTimeZone.value) ||
+      renewalPreview.value.length !== confirmIds.value.length ||
+      renewalPreview.value.some(p => !p.ok) ||
+      (restrictedRenewals.value && !temporaryAccessConsent.value) ||
+      (restrictedRenewals.value && confirmIds.value.length > 20)) return false;
+    return true;
+  }
   if (action.value.startsWith("tag_")) return !!chosenTag.value;
   return true;
 });
@@ -213,18 +248,41 @@ const executeAction = async () => {
       for (let i=0; i<ids.length; i++) {
         const id = ids[i], peer = live.get(id);
         progress.value = `Updating ${i+1}/${ids.length}`;
-        if (!classifyChanges(original.get(id), peer, action.value)) {
-          report([id], false, "Limit changed since selection; skipped");
+        if (!classifyChanges(original.get(id), peer, action.value) ||
+          !!original.get(id)?.restricted !== !!peer.restricted) {
+          report([id], false, "Limits or access changed since selection; skipped");
           continue;
         }
+        let saved = false, failure = "", restored = true;
         try {
           const job = plannedJob(peer, props.configuration.Name, action.value, value,
-            new Date(), uuid);
-          const response = await callPost("/api/savePeerScheduleJob", {Job:job});
-          report([id], !!response.status, response.message);
+            new Date(), uuid, {
+              serverTimeZone:serverTimeZone.value,
+              assumeWeightOne:assumeWeightOne.value
+            });
+          if (peer.restricted) {
+            const outcome = await renewRestrictedWithRestore({
+              id, configuration:props.configuration.Name, job,
+              consent:temporaryAccessConsent.value, post:callPost, get:callGet,
+              onRestoring:() => { progress.value = `Restoring restriction for ${i+1}/${ids.length}`; }
+            });
+            saved = outcome.saved;
+            restored = outcome.restored;
+            failure = outcome.error;
+          } else {
+            const response = await callPost("/api/savePeerScheduleJob", {Job:job});
+            saved = !!response.status;
+            if (!saved) failure = response.message || "Could not save policy job";
+          }
         } catch (e) {
-          report([id], false, e.message || "Invalid policy");
+          failure = e?.message || "Unable to renew this peer";
         }
+        if (!restored) {
+          error.value = `CRITICAL: Restricted peer ${id} may have access. Verify access and re-restrict immediately.`;
+        }
+        report([id], saved && restored, failure || (peer.restricted
+          ? "Policy saved; access remains restricted" : "Policy saved"));
+        if (!restored) break; // Never continue after an uncertain access state.
       }
     }
     progress.value = `Completed: ${successes.length} successful, ${failures.length} failed.`;
@@ -239,7 +297,9 @@ const executeAction = async () => {
     error.value = e?.message || "Bulk action did not complete.";
   } finally {
     busy.value = false;
+    const operationError = error.value;
     await refresh();
+    if (operationError) error.value = operationError;
   }
 };
 </script>
@@ -257,8 +317,9 @@ const executeAction = async () => {
           <div v-if="error" class="alert alert-warning mb-0" role="alert">{{error}}</div>
           <div v-if="progress" class="alert alert-secondary py-2 mb-0" role="status">{{progress}}</div>
           <p class="text-muted small mb-0">
-            Uses existing WireDash APIs only. "Unlimited" means no active time/traffic restriction job.
-            Time comparisons use your browser's timezone; check the preview before applying changes.
+            Uses existing APIs only. "Unlimited" means no active limit on an allowed peer.
+            Restricted peers with unknown historical limits show "unknown", not unlimited.
+            Completed limit jobs are not present in the old API; expired reasons may be unidentifiable.
           </p>
           <div class="d-flex gap-2 flex-wrap">
             <label class="flex-grow-1" style="min-width: 190px">
@@ -278,7 +339,7 @@ const executeAction = async () => {
                 <option value="unlimited_traffic">No active traffic limit</option>
                 <option value="restricted">Access restricted</option>
                 <option value="active">Not restricted or expired</option>
-                <option value="unknown">Unknown/legacy policy</option>
+                <option value="unknown">Unknown/legacy or restricted-expired history</option>
               </select>
             </label>
             <label class="flex-grow-1" style="min-width: 155px">
@@ -294,6 +355,9 @@ const executeAction = async () => {
               :disabled="busy || !!action || loading" @click="refresh">Refresh</button>
           </div>
 
+          <div v-if="!validTimeZone(serverTimeZone)" class="alert alert-warning mb-0 py-2 small">
+            Invalid server timezone. Use the container's WGD_TZ setting, e.g. Europe/Istanbul.
+          </div>
           <div class="d-flex gap-3 flex-wrap align-items-center small">
             <label class="d-flex align-items-center gap-2">
               <input type="checkbox" :checked="selectedOnPage"
@@ -370,9 +434,10 @@ const executeAction = async () => {
           <div v-if="action" class="border rounded-3 p-3 d-flex flex-column gap-3">
             <h6 class="mb-0">{{actionLabel}} — {{confirmIds.length}} peers</h6>
             <p class="small mb-0">
-              Review the selection. The existing API is called only after you press Confirm;
-              operations may be partially successful and are not automatically rolled back.
-              Extending time/traffic does not automatically lift an existing access restriction.
+              Review the selected peers; no API call writes anything before Confirm.
+              Jobs are not transactional. Expired history is not exposed by the existing API,
+              so a restricted peer's cause cannot be verified. Renewals never automatically
+              lift an existing restriction.
             </p>
             <div class="small border rounded-2 p-2" style="max-height:100px;overflow:auto">
               <div v-for="peer in previewPeers" :key="peer.id">
@@ -385,6 +450,42 @@ const executeAction = async () => {
                 :max="action === 'time' ? 3650 : 1000000" :step="action === 'time' ? 1 : 0.1"
                 v-model.number="amount" :disabled="busy">
             </label>
+            <template v-if="action === 'time' || action === 'traffic'">
+              <label class="small">
+                Server timezone (match the deployed WGD_TZ, not your browser timezone)
+                <input class="form-control form-control-sm" v-model.trim="serverTimeZone"
+                  :disabled="busy" spellcheck="false" placeholder="Europe/Istanbul">
+              </label>
+              <label v-if="action === 'traffic'" class="small d-flex align-items-start gap-2">
+                <input type="checkbox" v-model="assumeWeightOne" :disabled="busy">
+                If a peer has zero usage and no active quota, use factor 1. The historical
+                weight cannot be recovered from the existing API in that case.
+              </label>
+              <div class="small border rounded p-2" style="max-height:180px;overflow-y:auto">
+                <strong>Before / after preview ({{renewalPreview.length}} peers)</strong>
+                <div v-for="item in renewalPreview" :key="item.id"
+                  :class="item.ok ? 'text-body' : 'text-danger'">
+                  <strong>{{item.name}}</strong> — {{item.result}}
+                  <span v-if="item.restricted" class="text-warning-emphasis">
+                    · RESTRICTED: remains restricted after renewal
+                  </span>
+                </div>
+              </div>
+              <div v-if="restrictedRenewals" class="alert alert-warning mb-0 small" role="alert">
+                <strong>Restricted users: extra security step.</strong>
+                The unchanged API will not accept a new limit for restricted peers.
+                Continuing requires temporarily allowing each restricted peer,
+                saving the limit, and re-restricting it (with verification).
+                Access can be briefly possible during this process; the operation
+                stops if restriction cannot be verified. Limit restricted renewals
+                to 20 selected peers per operation. For zero exposure, cancel and
+                renew individually using your own maintenance procedure.
+                <label class="d-flex gap-2 mt-2">
+                  <input type="checkbox" v-model="temporaryAccessConsent" :disabled="busy">
+                  I explicitly accept temporary access and mandatory re-restriction.
+                </label>
+              </div>
+            </template>
             <label v-if="action.startsWith('tag_')" class="small">
               Tag
               <select class="form-select form-select-sm" v-model="chosenTag" :disabled="busy">
