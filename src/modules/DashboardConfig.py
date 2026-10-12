@@ -270,11 +270,16 @@ class DashboardConfig:
         if section == "Peers" and key == "peer_traffic_factor" and not init:
             # Reuse the EXISTING settings endpoint. The hook stores new factor
             # epochs for all peers; no bot API shape or new endpoint is added.
-            old = self.GetConfig("Peers", "peer_traffic_factor")[1]
-            new_factor = str(value)
-            if str(old) == new_factor:
-                return True, ""
+            from decimal import Decimal
+            # GetConfig converts bare "1" into boolean True. Always persist
+            # integral factors as "1.0", "2.0", etc. so bot requests with
+            # an omitted factor receive an actual numeric string, never bool.
+            new_factor = format(Decimal(str(value)), "f")
+            if "." not in new_factor:
+                new_factor += ".0"
             previous = self.__config["Peers"]["peer_traffic_factor"]
+            if previous == new_factor:
+                return True, ""
             self.__config["Peers"]["peer_traffic_factor"] = new_factor
             if not self.SaveConfig():
                 self.__config["Peers"]["peer_traffic_factor"] = previous
