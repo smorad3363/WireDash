@@ -24,7 +24,7 @@ const telegramPhases = {
   downloading: "Downloading Telegram backup parts",
   checking: "Checking SHA256 of all parts",
   importing: "Verifying full TAR and SQLite backup",
-  completed: "Ready: verify and select Restore below",
+  completed: "Downloaded and verified; confirm Restore below",
   failed: "Telegram download failed",
 }
 let telegramPolling = false
@@ -39,6 +39,13 @@ const pollTelegram = async () => {
     const body = await response.json()
     if (body?.status && body.data) {
       telegramDownload.value = body.data.telegramDownload
+      if (telegramDownload.value?.state === "completed" && telegramDownload.value.archive &&
+          restoreName.value !== telegramDownload.value.archive) {
+        restoreName.value = telegramDownload.value.archive
+        confirmation.value = ""
+        password.value = ""
+        totp.value = ""
+      }
       botBackups.value = body.data.botBackups || []
       telegramDownloadAvailable.value = body.data.telegramDownloadConfigured
       status.value = body.data
@@ -180,7 +187,7 @@ const execute = async (operation, fields = {}, text = "Updated") => {
         restoreProgress.value = res.data.status.restoreProgress
         interval.value = res.data.status.intervalMinutes
       }
-      if (operation === "download_telegram" && res.data?.job) {
+      if (["download_telegram", "download_bot_backup"].includes(operation) && res.data?.job) {
         telegramDownload.value = res.data.job
       }
       if (operation === "restore" && res.data?.progress) {
@@ -304,32 +311,33 @@ onUnmounted(() => {
               <strong>{{item.name}}</strong>
               <div class="text-muted">{{fileSize(item.bytes)}} · {{item.parts}} Telegram parts · {{displayDate(item.created)}}</div>
             </div>
+            <a v-if="item.link" :href="item.link" target="_blank" rel="noopener noreferrer"
+               class="btn btn-sm btn-outline-secondary">Telegram message</a>
             <button class="btn btn-sm btn-outline-primary" type="button"
                     :disabled="busy || ['queued', 'running'].includes(telegramDownload?.state)"
                     @click="downloadBotBackup(item.name)">Download & verify on VPS</button>
           </div>
         </div>
         <div class="border rounded-3 p-3 d-flex flex-column gap-2">
-          <h6 class="mb-0">Download a backup directly from Telegram</h6>
+          <h6 class="mb-0">Recover using a Telegram message link</h6>
           <p class="small text-muted mb-0">
-            For historical 45 MB parts without a bot file catalog, this alternative
-            uses an authorized Telegram account. For new backups use the
-            <strong>Bot backup library</strong> above with no login.
-            One-time VPS setup: <code>sudo wireback --telegram-login</code>.
-            Connect a Telegram USER account with access to the bot's private chat or backup channel.
-            Then paste the message link of <strong>PART 1</strong>; the VPS finds and downloads the
-            remaining parts, checks their SHA256, and imports the backup. No files pass through your browser.
-            Import never starts a destructive restore automatically.
+            Paste a link to the backup header, any part, or the completion message.
+            For backups sent by this WireDash server with recorded message IDs, the VPS
+            downloads all 18 MB parts using your existing Bot Token — no Telegram user login.
+            SHA256 and archive/database integrity are checked before import.
+            Older backups without recorded message IDs can still use
+            <code>sudo wireback --telegram-login</code> and the legacy PART 1 link.
+            Restore requires separate administrator password/MFA confirmation.
           </p>
-          <div v-if="!telegramDownloadAvailable" class="small text-warning">
-            Telegram user connection not configured. Run the one-time SSH login first.
-            Bot token alone cannot download the large archived documents.
+          <div v-if="!telegramDownloadAvailable && !botBackups.length" class="small text-muted">
+            No recorded bot backups yet. Start a new backup, or use Telegram USER login
+            for historical messages.
           </div>
           <div class="d-flex flex-wrap align-items-center gap-2">
             <input class="form-control flex-grow-1" style="min-width:240px" v-model="telegramLink"
                    type="url" autocomplete="off" placeholder="https://t.me/channel/12345 or https://t.me/c/12345/67890">
             <button class="btn btn-sm btn-primary" type="button"
-                    :disabled="busy || !telegramDownloadAvailable || !telegramLink ||
+                    :disabled="busy || !telegramLink ||
                       ['queued','running'].includes(telegramDownload?.state)"
                     @click="downloadFromTelegram">Download & verify on VPS</button>
           </div>
@@ -353,7 +361,7 @@ onUnmounted(() => {
               {{telegramDownload.error || "Inspect the host download journal"}}
             </small>
             <small v-if="telegramDownload.state === 'completed'" class="text-success">
-              {{telegramDownload.archive}} imported; choose Restore below and confirm with password/MFA.
+              {{telegramDownload.archive}} imported. The Restore confirmation form has been prepared below; enter password/MFA and confirm.
             </small>
           </div>
         </div>
