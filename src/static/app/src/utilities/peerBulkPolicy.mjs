@@ -1,4 +1,4 @@
-import {peerStatus} from "./peerBulkDisplay.mjs";
+import {peerStatus, peerTimeLabel, peerDataBar} from "./peerBulkDisplay.mjs";
 
 // Presentation + preview for the EXISTING peer and schedule-job APIs.
 // The legacy peer payload contains ACTIVE jobs, not finished job history.
@@ -91,7 +91,13 @@ export function filterAndSortPeers(peers, {
   serverTimeZone = DEFAULT_SERVER_TIME_ZONE
 } = {}, now = Date.now()) {
   const needle = String(query).trim().toLowerCase();
-  const marked = peers.map(peer => ({peer, policy:peerPolicy(peer, now, serverTimeZone)}));
+  const marked = peers.map(peer => {
+    const policy = peerPolicy(peer, now, serverTimeZone);
+    return {
+      peer, policy, summary:peerStatus(policy), timeLabel:peerTimeLabel(policy),
+      dataBar:peerDataBar(peer, policy)
+    };
+  });
   const matches = marked.filter(({peer,policy}) => {
     if (needle && ![peer.name,peer.id,peer.allowed_ip].some(x =>
       String(x ?? "").toLowerCase().includes(needle))) return false;
@@ -116,7 +122,7 @@ export function filterAndSortPeers(peers, {
       case "traffic_remaining": return x.policy.trafficRemainingGb;
       case "usage": return typeof x.peer.metered_data === "number" &&
         Number.isFinite(x.peer.metered_data) ? -x.peer.metered_data : null;
-      case "status": return peerStatus(x.policy).rank;
+      case "status": return x.summary.rank;
       case "access": return x.peer.restricted ? 1 : 0;
       default: return null;
     }
