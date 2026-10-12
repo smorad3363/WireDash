@@ -162,7 +162,7 @@ const renewalPreview = computed(() => {
       const result = action.value === "time"
         ? `New expiry: ${job.Value} (${serverTimeZone.value})`
         : action.value === "factor"
-          ? `Factor: ${peerPolicy(peer).weight}× → ${factorValue.value}× · quota stays ${JSON.parse(job.Value).limit_gb} GB · projected usage ${(Number(peer.metered_data || 0) * Number(factorValue.value) / peerPolicy(peer).weight).toFixed(2)} GB`
+          ? `Factor: ${peerPolicy(peer).weight}× → ${factorValue.value}× · quota stays ${JSON.parse(job.Value).limit_gb} GB · billed so far stays ${Number(peer.metered_data || 0).toFixed(2)} GB · only future traffic uses new factor`
           : `New quota: ${JSON.parse(job.Value).limit_gb} metered GB · factor ${JSON.parse(job.Value).weight}`;
       return {id:peer.id, name:peer.name || peer.id, ok:true, result, restricted:!!peer.restricted};
     } catch(e) {
@@ -521,8 +521,9 @@ const executeAction = async () => {
             <template v-if="action === 'time' || action === 'traffic' || action === 'factor'">
               <div v-if="action === 'factor'" class="alert alert-warning small mb-0">
                 Changes the billing multiplier for EXISTING peers with supported active quota jobs.
-                Their existing GB quota stays unchanged; weighted usage can jump and the quota can
-                be exhausted immediately. Unlimited/no-quota peers cannot be changed by this API.
+                Their existing GB quota and PAST billed usage stay unchanged.
+                Only FUTURE traffic uses the new factor.
+                Unlimited/no-quota peers cannot be changed individually by this old API.
                 Nothing is updated until Confirm.
               </div>
               <label v-if="action === 'factor'" class="small">
@@ -532,7 +533,7 @@ const executeAction = async () => {
               </label>
               <label v-if="action === 'factor'" class="small d-flex gap-2 align-items-start">
                 <input type="checkbox" v-model="factorConsent" :disabled="busy">
-                I understand that changing the factor can immediately exhaust a user's existing quota.
+                I understand that past billed usage stays fixed and future traffic uses the new factor.
               </label>
               <label v-if="action !== 'factor'" class="small">
                 Server timezone (match the deployed WGD_TZ, not your browser timezone)
