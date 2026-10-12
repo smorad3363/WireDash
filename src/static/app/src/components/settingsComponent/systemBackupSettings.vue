@@ -320,7 +320,11 @@ onUnmounted(() => {
             listed unless their file IDs were recorded.
           </p>
           <div v-if="!botBackups.length" class="small text-muted">
-            No cataloged bot backups yet. New backups will appear automatically after successful delivery.
+            No fully cataloged bot backups yet. Receiving some Telegram parts does not
+            guarantee all parts were accepted: the library appears only after
+            every file ID is recorded and verified. An incomplete upload is
+            retried on the next backup run. Bot API cannot retrieve file IDs
+            from older Telegram history without an existing catalog.
           </div>
           <div v-for="item in botBackups" :key="item.name"
                class="d-flex flex-wrap align-items-center gap-2 py-2 border-bottom small">
