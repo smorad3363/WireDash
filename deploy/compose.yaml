@@ -6,6 +6,9 @@ services:
     environment:
       wgd_port: "${WGD_PORT:-10086}"
       tz: "${WGD_TZ:-Europe/Istanbul}"
+      # Persistent wg0.conf MTU is applied before WireGuard autostarts.
+      wg_default_mtu: "${WGD_WG_MTU:-}"
+      wg_autostart: "wg0"
     ports:
       - "${WGD_PANEL_BIND:-0.0.0.0}:${WGD_PORT:-10086}:${WGD_PORT:-10086}/tcp"
       - "51820:51820/udp"
