@@ -154,19 +154,22 @@ assert.equal(peerTimeLabel(peerPolicy(sample[3],now.getTime())),"1d left");
 
 // Clicking an existing header twice reverses sorting and preserves active
 // selection (the table's stable key is the peer ID, not the row position).
-const sortingPeers=[sample[0],sample[3],sample[8],sample[9],sample[2]];
+const sortingPeers=[sample[0],sample[1],sample[3],sample[4],sample[8],sample[9],sample[2]];
 const sorted=(sort,direction) => filterAndSortPeers(sortingPeers,
   {sort,direction},now.getTime()).map(x=>x.peer.id);
 assert.deepEqual(sorted("name","asc"), [...sorted("name","desc")].reverse());
 assert.equal(sorted("time_remaining","asc")[0],"time-exhausted");
 assert.equal(sorted("time_remaining","desc")[0],"both-limited");
-assert.deepEqual(sorted("time_remaining","desc").slice(-2).sort(),
-  ["closed-time","open-unlimited"].sort());
-assert.equal(sorted("traffic_remaining","asc").at(-1),"open-unlimited");
-assert.equal(sorted("traffic_remaining","desc").at(-1),"open-unlimited");
+assert.deepEqual(sorted("time_remaining","desc").slice(-3).sort(),
+  ["closed-time","open-unlimited","traffic-exhausted"].sort());
+assert.deepEqual(sorted("traffic_remaining","asc").slice(0,3),
+  ["traffic-exhausted","quota-soon","both-limited"]);
+assert.deepEqual(sorted("traffic_remaining","desc").slice(0,3),
+  ["both-limited","quota-soon","traffic-exhausted"]);
 assert.equal(sorted("status","asc")[0],"time-exhausted");
 assert.equal(sorted("status","desc")[0],"open-unlimited");
-assert.equal(sorted("access","desc")[0],"closed-time");
+assert.equal(sorted("access","desc")[0],"traffic-exhausted");
+assert.equal(sorted("access","asc")[0],"both-limited");
 
 // Simulate old endpoints, including partial HTTP failures and a failed
 // access-restoration attempt. No live users, keys or network calls involved.
