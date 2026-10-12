@@ -1,3 +1,5 @@
+import {peerStatus} from "./peerBulkDisplay.mjs";
+
 // Presentation + preview for the EXISTING peer and schedule-job APIs.
 // The legacy peer payload contains ACTIVE jobs, not finished job history.
 // A restricted peer with no active rule is UNKNOWN, never "unlimited".
@@ -85,7 +87,8 @@ export function peerPolicy(peer, now = Date.now(), serverTimeZone = DEFAULT_SERV
 }
 
 export function filterAndSortPeers(peers, {
-  status = "all", query = "", sort = "name", serverTimeZone = DEFAULT_SERVER_TIME_ZONE
+  status = "all", query = "", sort = "name", direction = "asc",
+  serverTimeZone = DEFAULT_SERVER_TIME_ZONE
 } = {}, now = Date.now()) {
   const needle = String(query).trim().toLowerCase();
   const marked = peers.map(peer => ({peer, policy:peerPolicy(peer, now, serverTimeZone)}));
@@ -109,17 +112,28 @@ export function filterAndSortPeers(peers, {
   });
   const metric = x => {
     switch(sort) {
-      case "time_remaining": return x.policy.timeRemainingDays ?? Infinity;
-      case "traffic_remaining": return x.policy.trafficRemainingGb ?? Infinity;
-      case "usage": return -Number(x.peer.metered_data || 0);
+      case "time_remaining": return x.policy.timeRemainingDays;
+      case "traffic_remaining": return x.policy.trafficRemainingGb;
+      case "usage": return typeof x.peer.metered_data === "number" &&
+        Number.isFinite(x.peer.metered_data) ? -x.peer.metered_data : null;
+      case "status": return peerStatus(x.policy).rank;
+      case "access": return x.peer.restricted ? 1 : 0;
       default: return null;
     }
   };
+  // Unknown limits are always last (in both directions). Flipping a column
+  // must not put unlimited/legacy users above peers with a numeric limit.
+  const sign = direction === "desc" ? -1 : 1;
   matches.sort((a,b) => {
     const av=metric(a),bv=metric(b);
-    if (av !== null && bv !== null && av !== bv) return av-bv;
-    return String(a.peer.name || "").localeCompare(String(b.peer.name || "")) ||
-      String(a.peer.id).localeCompare(String(b.peer.id));
+    if (sort !== "name") {
+      const amissing = av == null || !Number.isFinite(av);
+      const bmissing = bv == null || !Number.isFinite(bv);
+      if (amissing !== bmissing) return amissing ? 1 : -1;
+      if (!amissing && av !== bv) return sign * (av - bv);
+    }
+    return sign * (String(a.peer.name || "").localeCompare(String(b.peer.name || "")) ||
+      String(a.peer.id).localeCompare(String(b.peer.id)));
   });
   return matches;
 }
