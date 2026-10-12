@@ -367,7 +367,7 @@ import pathlib,sys
 p=pathlib.Path(sys.argv[1]); value=sys.argv[2]
 lines=[l for l in p.read_text().splitlines() if not l.startswith("WGD_WG_MTU=")]
 lines.append("WGD_WG_MTU="+value)
-p.write_text("\\n".join(lines)+"\\n")
+p.write_text("\n".join(lines)+"\n")
 PY
   # Older managed Compose files may lack the env wiring, so add it only
   # inside the wgdashboard environment mapping. No volume or key is touched.
@@ -375,21 +375,21 @@ PY
 import pathlib,re,sys
 p=pathlib.Path(sys.argv[1])
 text=p.read_text()
-start=re.search(r"(?m)^  wgdashboard:[ \\t]*$",text)
+start=re.search(r"(?m)^  wgdashboard:[ \t]*$",text)
 if not start:
     raise SystemExit("Cannot find wgdashboard service for MTU wiring")
-next_svc=re.search(r"(?m)^  [A-Za-z0-9_-]+:[ \\t]*$",text[start.end():])
+next_svc=re.search(r"(?m)^  [A-Za-z0-9_-]+:[ \t]*$",text[start.end():])
 end=start.end()+next_svc.start() if next_svc else len(text)
 section=text[start.end():end]
 if "wg_default_mtu:" not in section:
-    env=re.search(r"(?m)^    environment:[ \\t]*$",section)
+    env=re.search(r"(?m)^    environment:[ \t]*$",section)
     if not env:
         raise SystemExit("Cannot add MTU: wgdashboard environment mapping is missing")
     following=section[env.end():]
-    if re.match(r"\\s*\\n[ \\t]*-",following):
+    if re.match(r"\s*\n[ \t]*-",following):
         raise SystemExit("Cannot add MTU to list-style environment safely")
     insertion=start.end()+env.end()
-    text=text[:insertion]+'\\n      wg_default_mtu: "${WGD_WG_MTU:-}"'+text[insertion:]
+    text=text[:insertion]+'\n      wg_default_mtu: "${WGD_WG_MTU:-}"'+text[insertion:]
     p.write_text(text)
 PY
 fi
@@ -461,10 +461,10 @@ if [[ -n "$WG_MTU" ]]; then
   docker exec "$CONTAINER" python3 -c '
 import pathlib,re,sys
 s=pathlib.Path("/etc/wireguard/wg0.conf").read_text()
-a=re.split(r"(?m)^\\s*\\[Interface\\]\\s*$",s)
+a=re.split(r"(?m)^\s*\[Interface\]\s*$",s)
 assert len(a)==2, "wg0.conf missing [Interface]"
-interface=re.split(r"(?m)^\\s*\\[Peer\\]\\s*$",a[1])[0]
-assert re.search(r"(?mi)^\\s*MTU\\s*=\\s*"+re.escape(sys.argv[1])+r"\\s*$",interface), "wrong persisted MTU"
+interface=re.split(r"(?m)^\s*\[Peer\]\s*$",a[1])[0]
+assert re.search(r"(?mi)^\s*MTU\s*=\s*"+re.escape(sys.argv[1])+r"\s*$",interface), "wrong persisted MTU"
 ' "$WG_MTU" || die "wg0.conf does not contain persistent MTU=$WG_MTU"
   if ((FRESH_INSTALL || WG_MTU_GIVEN)); then
     live_mtu=""
