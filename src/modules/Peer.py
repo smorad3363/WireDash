@@ -65,10 +65,12 @@ class Peer:
             self.ShareLink = [link for link in self.ShareLink if link.ExpireDate > now]
 
     def metered_usage(self):
-        weight = self.configuration.AllPeerJobs.weight_for(self.configuration.Name, self.id)
-        return metered_usage(
+        # Stable public JSON fields, but forward-only billing under changing
+        # factors. Historic usage is never multiplied by a new global factor.
+        return self.configuration.AllPeerJobs.metered_usage_for(
+            self.configuration.Name, self.id,
             (self.total_receive or 0) + (self.cumu_receive or 0),
-            (self.total_sent or 0) + (self.cumu_sent or 0), weight
+            (self.total_sent or 0) + (self.cumu_sent or 0)
         )
 
     def toJson(self):
@@ -295,6 +297,10 @@ class Peer:
         self.ShareLink = self.configuration.AllPeerShareLinks.getLink(self.configuration.Name, self.id)
 
     def resetDataUsage(self, mode: str):
+        if mode not in ("total", "receive", "sent"):
+            return False
+        old_receive = (self.total_receive or 0) + (self.cumu_receive or 0)
+        old_sent = (self.total_sent or 0) + (self.cumu_sent or 0)
         try:
             with self.configuration.engine.begin() as conn:
                 if mode == "total":
@@ -340,6 +346,8 @@ class Peer:
                     self.total_sent = 0
                 else:
                     return False
+            self.configuration.AllPeerJobs.reset_meter(
+                self.configuration.Name, self.id, mode, old_receive, old_sent)
         except Exception as e:
             print(e)
             return False
