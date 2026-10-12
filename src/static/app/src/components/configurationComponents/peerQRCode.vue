@@ -7,7 +7,8 @@ export default {
 	name: "peerQRCode",
 	components: {LocaleText},
 	props: {
-		selectedPeer: Object
+		selectedPeer: Object,
+		configurationInfo: Object
 	},
 	setup(){
 		const dashboardStore = DashboardConfigurationStore();
@@ -15,7 +16,8 @@ export default {
 	},
 	data(){
 		return{
-			loading: true
+			loading: true,
+			errorMessage: ""
 		}
 	},
 	mounted() {
@@ -23,39 +25,45 @@ export default {
 			id: this.selectedPeer.id
 		}, (res) => {
 			this.loading = false;
-			if (res.status){
-				let data = ""
-				if (this.selectedPeer.configuration.Protocol === "awg"){
-					let awgQRCodeObject = {
-						containers: [
-							{
-								awg: {
-									isThirdPartyConfig: true,
-									last_config: res.data.file,
-									port: this.selectedPeer.configuration.ListenPort,
-									transport_proto: "udp"
-								},
-								container: "amnezia-awg",
-							}
-						],
+			if (!res?.status || typeof res.data?.file !== "string" || !res.data.file) {
+				this.errorMessage = res?.message || "Could not load the peer configuration for QR.";
+				return;
+			}
+
+			const onQrError = (error) => {
+				if (error) {
+					console.error("QR rendering failed:", error);
+					this.errorMessage = "Could not render the QR code. Download the configuration instead.";
+				}
+			};
+			try {
+				if (this.configurationInfo.Protocol === "awg") {
+					const awgQRCodeObject = {
+						containers: [{
+							awg: {
+								isThirdPartyConfig: true,
+								last_config: res.data.file,
+								port: this.configurationInfo.ListenPort,
+								transport_proto: "udp"
+							},
+							container: "amnezia-awg"
+						}],
 						defaultContainer: "amnezia-awg",
 						description: this.selectedPeer.name,
 						hostName: this.dashboardStore.Configuration.Peers.remote_endpoint
-					}
+					};
 					QRCode.toCanvas(
-						document.querySelector("#awg_vpn_qrcode"), btoa(JSON.stringify(awgQRCodeObject)), (error) => {
-							if (error) console.error(error)
-						}
-					)
+						document.querySelector("#awg_vpn_qrcode"),
+					btoa(JSON.stringify(awgQRCodeObject)),
+					onQrError
+					);
 				}
-				data = res.data.file
-				QRCode.toCanvas(document.querySelector("#qrcode"), data,  (error) => {
-					if (error) console.error(error)
-				})
-			}else{
-				this.dashboardStore.newMessage("Server", res.message, "danger")
+				QRCode.toCanvas(document.querySelector("#qrcode"), res.data.file, onQrError);
+			} catch (error) {
+				console.error("QR rendering failed:", error);
+				this.errorMessage = "Could not render the QR code. Download the configuration instead.";
 			}
-		})
+		});
 	}
 }
 </script>
@@ -73,15 +81,16 @@ export default {
 					</div>
 					<div class="card-body p-4">
 						<div class="d-flex gap-2 flex-column">
-							<div class="d-flex flex-column gap-2 align-items-center">
+							<div v-if="errorMessage" class="alert alert-danger mb-0" role="alert">{{errorMessage}}</div>
+							<div v-if="!errorMessage" class="d-flex flex-column gap-2 align-items-center">
 								<canvas id="qrcode"
 										style="width: 200px !important; height: 200px !important;"
 										class="rounded-3 shadow animate__animated animate__fadeIn animate__faster qrcode"
 										:class="{'d-none': loading}"></canvas>
-								<LocaleText t="Scan with WireGuard App" class="text-muted" v-if='this.selectedPeer.configuration.Protocol === "wg"'></LocaleText>
-								<LocaleText t="Scan with AmneziaWG App" class="text-muted" v-if='this.selectedPeer.configuration.Protocol === "awg"'></LocaleText>
+								<LocaleText t="Scan with WireGuard App" class="text-muted" v-if='this.configurationInfo.Protocol === "wg"'></LocaleText>
+								<LocaleText t="Scan with AmneziaWG App" class="text-muted" v-if='this.configurationInfo.Protocol === "awg"'></LocaleText>
 							</div>
-							<div v-if='this.selectedPeer.configuration.Protocol === "awg"' class="d-flex flex-column gap-2 align-items-center">
+							<div v-if='!errorMessage && this.configurationInfo.Protocol === "awg"' class="d-flex flex-column gap-2 align-items-center">
 								<canvas id="awg_vpn_qrcode" class="rounded-3 shadow animate__animated animate__fadeIn animate__faster  qrcode"
 										:class="{'d-none': loading}"></canvas>
 								<LocaleText t="Scan with AmneziaVPN App" class="text-muted"></LocaleText>
