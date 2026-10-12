@@ -169,8 +169,11 @@ assert.match(noConsent.result.error,/consent/);
 const ui=readFileSync("src/static/app/src/components/configurationComponents/peerListComponents/peerBulkManager.vue","utf8");
 const list=readFileSync("src/static/app/src/components/configurationComponents/peerList.vue","utf8");
 for(const e of ["/api/getWireguardConfigurationInfo","/api/savePeerScheduleJob",
-  "/api/updateWireguardConfigurationInfo","/api/allowAccessPeers",
+  "/api/updateWireguardConfigurationInfo",
   "/api/restrictPeers","deletePeers"]) assert.ok(ui.includes(e),e);
+const legacyRenewalFlow=readFileSync("src/static/app/src/utilities/peerBulkRenewal.mjs","utf8");
+assert.ok(legacyRenewalFlow.includes("/api/allowAccessPeers"));
+assert.ok(legacyRenewalFlow.includes("/api/restrictPeers"));
 assert.match(ui,/temporarily allowing each restricted peer/);
 assert.match(ui,/temporaryAccessConsent/);
 assert.match(ui,/Restoring restriction/);
