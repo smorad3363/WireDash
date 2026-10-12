@@ -211,6 +211,9 @@ with app.app_context():
     DashboardWebHooks: DashboardWebHooks = DashboardWebHooks(DashboardConfig)
     NewConfigurationTemplates: NewConfigurationTemplates = NewConfigurationTemplates()
     InitWireguardConfigurationsList(startup=True)
+    # Reuse the existing dashboard settings route; global factor changes are
+    # durable internal metering transitions, never new bot-facing APIs.
+    DashboardConfig.on_traffic_factor_change = AllPeerJobs.set_global_factor
     DashboardClients: DashboardClients = DashboardClients(WireguardConfigurations)
     app.register_blueprint(createClientBlueprint(WireguardConfigurations, DashboardConfig, DashboardClients))
 
@@ -1022,7 +1025,8 @@ def API_addPeers(configName):
             
 
             # Validate policy BEFORE provisioning any tunnel/peer.
-            duration_days, quota_gb, traffic_factor = parse_creation_limits(data)
+            duration_days, quota_gb, traffic_factor = parse_creation_limits(
+                data, DashboardConfig.GetConfig("Peers", "peer_traffic_factor")[1])
             bulkAdd: bool = data.get("bulkAdd", False)
             bulkAddAmount: int = data.get('bulkAddAmount', 0)
             preshared_key_bulkAdd: bool = data.get('preshared_key_bulkAdd', False)
