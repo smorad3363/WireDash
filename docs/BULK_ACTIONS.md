@@ -37,32 +37,68 @@ explicitly that it is a composition chart, NOT quota progress. A genuine
 0-GB used peer correctly has an empty bar. Time shows short remaining
 days/hours; tooltip includes the exact known expiry when available.
 
-## Default traffic factor and existing peers
+## Global factor, piecewise billing and unchanged bot API
 
-Under **Settings → Peers Settings**, an admin can save a preferred default
-factor (0.1–10). Because the LEGACY API has no server-shared factor-setting
-field, this default uses **local browser storage**. It is NOT synchronized
-across administrators/browsers. Saving it does not alter old peer jobs or
-the server's stored metering factors. Both peer creation flows (single and
-bulk) automatically use this default for NEW users that have a data quota.
-The legacy creation contract still requires `traffic_factor=1` for
-quota=0/unlimited peers.
+Under **Settings → Peers Settings**, an administrator can change the
+**server-persisted** factor (0.1–10) after an explicit confirmation. The
+current factor is in `[Peers] peer_traffic_factor` in the EXISTING
+`/data/wg-dashboard.ini` file. It is NOT a browser-only preference.
+The change updates factors for ALL current peers, including restricted
+peers and those with no active quota; and becomes the default for NEW peers,
+including those created by bots through existing POST `/api/addPeers/<name>`.
 
-To change already-existing peers, select users with **Has data quota**
-in Bulk Manager and choose **Set factor**. An individual preview shows
-the unchanged GB quota, previous/new factor and projected billed usage.
-A separate checkbox explicitly acknowledges that the new factor could
-immediately exhaust an existing quota. This calls the existing
-`savePeerScheduleJob` endpoint with the same JobID and quota, editing only
-the stored `weight`. Missing, expired or legacy/ambiguous active quotas
-cannot be changed via that API and are skipped/blocked by preview. Restricted
-peers still need the explicit temporary allow-and-restrict consent and
-verification already documented below. No automatic action is run just
-because an admin saved a default.
+The existing optional `traffic_factor` request field is preserved. If a
+bot provides it, that explicit number wins **at peer creation**. If the
+field is omitted, the current global server default wins. Saving a global
+factor later intentionally updates ALL existing peers regardless of original
+creation method or special factor. No endpoints, required fields, response
+JSON properties, authorization requirements, or bot routes change.
+
+**Non-retroactive billing:** Current raw upload/download counters are saved
+as anchors when the factor changes; the BILLED usage up to that instant is
+frozen. Only subsequent traffic is multiplied by the new factor. Example:
+10 GB at 1× plus 5 GB at 2× = 20 billed GB, NOT 30. The SQLite tables
+`PeerTrafficEpochs` and `PeerTrafficFactorHistory` live in the existing
+job database and are captured by the existing full-system backup procedure.
+Active quota policies retain the same GB limit and are evaluated against
+piecewise billed totals. A user with already-used quota keeps their
+accumulated billed usage. Per-user factor changes via the existing
+`savePeerScheduleJob` also use this epoch ledger.
+
+Bulk Manager's explicit **Set factor** remains available for selected
+users with a supported ACTIVE quota, but it is separate from changing the
+global factor. Its preview may be conservative for a peer with complicated
+historical epochs, because the unchanged old API does not expose the
+full factor history. Unsupported/closed/legacy jobs are rejected rather
+than guessed. Restricted peers still need the separately documented consent
+to temporary access, re-restriction and verification.
 
 Multiple-page selection is maintained in the modal, with distinct
 "select page" and "select all matching" controls. Maximum **200 peers
 per write operation**.
+
+## Fresh installation and backup
+
+Fresh installations default to DNS `1.1.1.1,8.8.8.8,9.9.9.9`,
+Allowed IPs `0.0.0.0/0`, peer MTU `1280`, keepalive `21`,
+and global traffic factor `1.0`. These defaults are inserted only where
+the persisted INI is missing a key; upgrades NEVER overwrite an existing
+saved value. The wg0 interface MTU stays controlled by the existing
+installer/Compose setting (1280 on new managed installations).
+
+The initial **welcome/setup** page now requests the tunnel's
+**Peer Remote Endpoint** hostname or IP alongside choosing a new admin
+username/password. It saves via existing settings API BEFORE finishing
+setup, so returning administrators are never prompted. The Docker
+entrypoint no longer overwrites this persisted value (or the peer DNS)
+on restart or upgrade.
+
+Whole-system backups already include `/data/wg-dashboard.ini`, all
+`/data/db` SQLite snapshots, WireGuard configs, Compose and .env. Thus
+the endpoint, saved server factor and ALL factor-history records follow
+the archive on restore. Do NOT automatically replace a restored endpoint
+with the new server IP; review it manually if the old domain no longer
+points to the restored server.
 
 ## Meaning of "unlimited" and expired
 
@@ -130,9 +166,9 @@ response field, or bot API behavior is introduced.
 ## Rollback
 
 The previous published release is pinned at
-`backup/pre-data-sort-weight-settings-2026-10-12`, commit
-`e9697a05cecd51f572688d5d1f53f451b3d343b8`, with immutable
-Docker image `ghcr.io/smorad3363/wiredash:sha-e9697a05cecd51f572688d5d1f53f451b3d343b8`.
+`backup/pre-global-factor-first-install-jobs-2026-10-12`, commit
+`fdd62e659b405c6112562c832774474c7b1fef12`, with immutable
+Docker image `ghcr.io/smorad3363/wiredash:sha-fdd62e659b405c6112562c832774474c7b1fef12`.
 The older pre-Bulk Manager snapshot also remains at
 `backup/pre-bulk-actions-2026-10-12`,
 `8c05f0abb3b11ee509c44b7c531f667df5626cdb`.
