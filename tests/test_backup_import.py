@@ -192,7 +192,11 @@ class ImportBackupTests(unittest.TestCase):
         self.assertNotIn(":/root:", compose)
         self.assertNotIn("/var/run/docker.sock", compose)
         sh = Path("deploy/wgdashbackup.sh").read_text()
-        self.assertIn('"$pending.imported"', sh)
+        self.assertIn('"$candidate.imported"', sh)
+        self.assertIn("wgdashbackup_retention.py", sh)
+        # Full-import recovery archives are explicitly not managed by the
+        # automatic delivered-noon retention policy.
+        self.assertIn("wgdashboard-(?:imported-)?", Path("deploy/wgdashbackup-panel-agent.py").read_text())
         for path in ("deploy/wgdashbackup-panel-agent.py", "deploy/wgdashbackup_import.py"):
             ast.parse(Path(path).read_text())
 
