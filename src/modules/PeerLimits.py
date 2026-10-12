@@ -34,8 +34,8 @@ def parse_creation_limits(data):
         raise ValueError("Quota must be between 0 and 1000000 GB")
     if not MIN_WEIGHT <= weight <= MAX_WEIGHT:
         raise ValueError("Traffic weight must be between 0.1 and 10")
-    if quota == 0 and weight != 1:
-        raise ValueError("A traffic quota is required when adjusting metering")
+    # Factors apply to future measured usage even for unlimited peers.
+    # The same existing traffic_factor request field carries this value.
     return int(days_raw), quota, weight
 
 
