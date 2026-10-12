@@ -173,7 +173,8 @@ const inferWeight = (peer, assumeWeightOne) => {
 
 export function plannedJob(peer, configuration, action, amount, now = new Date(),
   newId = () => "", options = {}) {
-  const {serverTimeZone = DEFAULT_SERVER_TIME_ZONE, assumeWeightOne = false} = options;
+  const {serverTimeZone = DEFAULT_SERVER_TIME_ZONE, assumeWeightOne = false,
+    replacementFactor = 1} = options;
   if (!validTimeZone(serverTimeZone)) throw new Error("Invalid server timezone.");
   const value = Number(amount);
   if (!Number.isFinite(value) || value <= 0 ||
@@ -199,7 +200,14 @@ export function plannedJob(peer, configuration, action, amount, now = new Date()
     if (activeRules(peer)?.some(j => TRAFFIC_FIELDS.has(j.Field)) && !policy.quotaJob)
       throw new Error("Ambiguous traffic policy; edit manually.");
     existing = policy.quotaJob;
-    const weight = existing ? policy.weight : inferWeight(peer, assumeWeightOne);
+    // Historic metered/raw ratio can be an AVERAGE of different factors;
+    // it is no longer the current rate after a global factor change.
+    // Do not guess a weight when the active quota is missing.
+    if (!existing && !assumeWeightOne)
+      throw new Error("No active quota: historic factor cannot be inferred. Explicitly consent to the server default.");
+    const weight = existing ? policy.weight : Number(replacementFactor);
+    if (!Number.isFinite(weight) || weight < 0.1 || weight > 10)
+      throw new Error("Invalid replacement traffic factor.");
     // When a limit was exceeded before renewal, grant the FULL added quota as
     // remaining usage; otherwise increase the previous limit by the amount.
     const base = Math.max(existing ? policy.quotaLimitGb : 0, peer.metered_data);
