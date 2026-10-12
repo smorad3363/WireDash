@@ -188,10 +188,15 @@ class PeerJobs:
     def saveJob(self, Job: PeerJob) -> tuple[bool, list] | tuple[bool, str]:
         import traceback
         try:
+            staged_epoch = None
+            factor_counters = None
             if Job.Field == "quota_total_data":
-                parse_quota_payload(Job.Value)
+                _, weight = parse_quota_payload(Job.Value)
                 if Job.Action != "restrict":
                     return False, "Quota rules may only restrict access"
+                if str(self.weight_for(Job.Configuration, Job.Peer)) != str(weight):
+                    factor_counters = self._current_counters(
+                        Job.Configuration, {Job.Peer}).get(Job.Peer)
             with self.engine.begin() as conn:
                 currentJob = self.searchJobById(Job.JobID)
                 if len(currentJob) == 0:
@@ -236,14 +241,13 @@ class PeerJobs:
                     if updated.rowcount == 0:
                         conn.execute(self.weightsTable.insert().values(
                             Configuration=Job.Configuration, Peer=Job.Peer, Weight=str(weight)))
+                    if factor_counters is not None:
+                        staged_epoch = self.ledger.stage_factor(
+                            conn, Job.Configuration, Job.Peer, *factor_counters,
+                            self.weight_for(Job.Configuration, Job.Peer), str(weight))
             if Job.Field == "quota_total_data":
-                old_weight = self.weight_for(Job.Configuration, Job.Peer)
-                if str(old_weight) != str(weight):
-                    counter = self._current_counters(Job.Configuration, {Job.Peer}).get(Job.Peer)
-                    if counter is not None:
-                        self.ledger.change_many(
-                            [(Job.Configuration, Job.Peer, *counter, str(weight))],
-                            self._weights, reason="job")
+                # Both quota job and snapshot committed in the SAME transaction.
+                self.ledger.committed(staged_epoch)
                 self._weights[(Job.Configuration, Job.Peer)] = str(weight)
             self.__getJobs()
             self.WireguardConfigurations.get(Job.Configuration).searchPeer(Job.Peer)[1].getJobs()
