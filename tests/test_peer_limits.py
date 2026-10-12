@@ -47,10 +47,16 @@ class QuotaTest(unittest.TestCase):
         root = pathlib.Path("src/static/app/src/components/configurationComponents")
         for p in (root/"peerAddModal.vue", root/"peerCreate.vue"):
             content = p.read_text()
-            for key in ("duration_days", "quota_gb", "traffic_factor"):
+            for key in ("duration_days", "quota_gb"):
                 self.assertIn(key, content)
+            # No factor is sent by the admin creation forms: server-wide
+            # default takes effect unless bot explicitly supplies factor.
+            self.assertNotIn("traffic_factor:", content)
+            self.assertNotIn("data.traffic_factor", content)
         jobs = pathlib.Path("src/modules/PeerJobs.py").read_text()
-        self.assertIn("quota_reached(", jobs)
+        self.assertIn("self.metered_usage_for(", jobs)
+        self.assertIn("PeerTrafficMeterState", jobs)
+        self.assertIn("apply_global_factor", jobs)
         self.assertIn("Traffic quota rule created", jobs)
         self.assertIn("Traffic quota rule updated", jobs)
         self.assertNotIn("f\"{Job.Value}", jobs)
