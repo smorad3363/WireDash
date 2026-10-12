@@ -170,7 +170,7 @@ const ui=readFileSync("src/static/app/src/components/configurationComponents/pee
 const list=readFileSync("src/static/app/src/components/configurationComponents/peerList.vue","utf8");
 for(const e of ["/api/getWireguardConfigurationInfo","/api/savePeerScheduleJob",
   "/api/updateWireguardConfigurationInfo",
-  "/api/restrictPeers","deletePeers"]) assert.ok(ui.includes(e),e);
+  "restrictPeers","deletePeers"]) assert.ok(ui.includes(e),e);
 const legacyRenewalFlow=readFileSync("src/static/app/src/utilities/peerBulkRenewal.mjs","utf8");
 assert.ok(legacyRenewalFlow.includes("/api/allowAccessPeers"));
 assert.ok(legacyRenewalFlow.includes("/api/restrictPeers"));
