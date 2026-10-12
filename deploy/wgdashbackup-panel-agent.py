@@ -162,9 +162,19 @@ def call(operation, payload):
         return {"queued": True, "job": telegram.current_job()}
     if operation == "download_telegram":
         link = payload.get("link")
-        telegram.parse_link(link)  # strict local-only Telegram URL parser
+        # First resolve a known link via the root-only bot catalog.
+        # This requires no Telegram user session and accepts only message IDs
+        # previously returned by Telegram when this bot sent a backup.
+        known = botfiles.resolve_link(link)
+        if known:
+            return call("download_bot_backup", {"name": known})
+        # Historical backup links without a matching catalog retain the
+        # Telethon fallback; never treat arbitrary links as bot file IDs.
         if not telegram.configured() or not telegram.VENV.is_file():
-            raise ValueError("Connect Telegram USER on VPS: sudo wireback --telegram-login")
+            raise ValueError(
+                "Link not found in this server's bot backup catalog. "
+                "For older links use Telegram USER login or upload the parts."
+            )
         previous = telegram.current_job()
         if previous and previous["state"] in ("queued", "running"):
             raise ValueError("Telegram download already running; wait for completion")
