@@ -13,6 +13,7 @@ import PersistentKeepAliveInput
 import {DashboardConfigurationStore} from "@/stores/DashboardConfigurationStore.js";
 import BulkAdd from "@/components/configurationComponents/newPeersComponents/bulkAdd.vue";
 import LocaleText from "@/components/text/localeText.vue";
+import {factorForCreation, readTrafficFactor} from "@/utilities/peerTrafficDefaults.mjs";
 
 export default {
 	name: "peerCreate",
@@ -105,7 +106,7 @@ export default {
 			}
 		},
 		'data.quota_gb'(q){
-			if (!(q > 0)) this.data.traffic_factor = 1;
+        this.data.traffic_factor = factorForCreation(q, readTrafficFactor());
 		},
 		'data.bulkAddAmount'(){
 			if (this.data.bulkAddAmount > this.availableIp.length){
@@ -156,9 +157,9 @@ export default {
           v-model.number="this.data.quota_gb" :disabled="saving">
       </div>
       <div class="col-md-4">
-        <label class="form-label small" for="limit-weight-page">Traffic weight</label>
-        <input id="limit-weight-page" type="number" min="0.1" max="10" step="0.1" class="form-control form-control-sm"
-          v-model.number="this.data.traffic_factor" :disabled="saving || !(this.data.quota_gb > 0)">
+        <label class="form-label small">Traffic weight (from Settings)</label>
+        <div class="form-control form-control-sm bg-body-tertiary" aria-label="Traffic factor from Peers Settings">{{this.data.traffic_factor}}×</div>
+        <small class="text-muted">Change in Settings → Peers Settings.</small>
       </div>
     </div>
     <small class="text-muted">Traffic limit checks the sum of upload and download. Charts and usage counters always show raw traffic. For bulk creation, the limits apply to every new peer.</small>
