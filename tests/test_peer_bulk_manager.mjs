@@ -5,7 +5,7 @@ import {DEFAULT_SERVER_TIME_ZONE, filterAndSortPeers, peerPolicy, plannedJob, pl
   from "../src/static/app/src/utilities/peerBulkPolicy.mjs";
 import {renewRestrictedWithRestore} from "../src/static/app/src/utilities/peerBulkRenewal.mjs";
 import {peerDataBar, peerStatus, peerTimeLabel} from "../src/static/app/src/utilities/peerBulkDisplay.mjs";
-import {factorForCreation, readTrafficFactor, saveTrafficFactor, validTrafficFactor} from "../src/static/app/src/utilities/peerTrafficDefaults.mjs";
+
 
 // Browser running in UTC or Europe/Berlin must schedule the server's local wall
 // time (default Europe/Istanbul) identically.
@@ -93,11 +93,13 @@ assert.equal(limited.JobID,"quota-rule");
 assert.equal(JSON.parse(limited.Value).limit_gb,"60");
 const exceeded=plannedJob(sample[1],"wg0","traffic",5,now,()=>assert.fail("existing"));
 assert.equal(JSON.parse(exceeded.Value).limit_gb,"15");
-const historical=plannedJob(sample[10],"wg0","traffic",5,now,()=>"new-quota");
+assert.throws(()=>plannedJob(sample[10],"wg0","traffic",5,now,()=>"new-quota"),/No active quota/);
+const historical=plannedJob(sample[10],"wg0","traffic",5,now,()=>"new-quota",
+  {assumeWeightOne:true,replacementFactor:2});
 assert.equal(historical.JobID,"new-quota");
 assert.equal(JSON.parse(historical.Value).weight,"2");
 assert.equal(JSON.parse(historical.Value).limit_gb,"29");
-assert.throws(()=>plannedJob(sample[11],"wg0","traffic",5,now,()=>""),/weight 1 consent/);
+assert.throws(()=>plannedJob(sample[11],"wg0","traffic",5,now,()=>""),/No active quota/);
 const zero=plannedJob(sample[11],"wg0","traffic",5,now,()=>"z",
   {assumeWeightOne:true});
 assert.equal(JSON.parse(zero.Value).weight,"1");
@@ -189,20 +191,15 @@ const usedOrder = direction => filterAndSortPeers(sortingByUsage,
 assert.deepEqual(usedOrder("desc"),["u-eight","u-one","u-zero","u-nodata"]);
 assert.deepEqual(usedOrder("asc"),["u-nodata","u-zero","u-one","u-eight"]);
 
-// The new default preference is browser-only; actual usage rules are NOT
-// changed merely by saving this setting. The existing create-peers JSON still
-// requires factor=1 when the new user has NO quota.
-const local=new Map();
-const storage={getItem:k=>local.get(k)??null,setItem:(k,v)=>local.set(k,v)};
-assert.equal(readTrafficFactor(storage),1);
-assert.equal(saveTrafficFactor(2,storage),2);
-assert.equal(readTrafficFactor(storage),2);
-assert.equal(factorForCreation(20,readTrafficFactor(storage)),2);
-assert.equal(factorForCreation(0,readTrafficFactor(storage)),1);
-assert.ok(validTrafficFactor(0.1));
-assert.ok(validTrafficFactor(10));
-assert.equal(validTrafficFactor(10.1),false);
-assert.throws(()=>saveTrafficFactor(0,storage),/between/);
+// Changing the global factor cannot be inferred from metered/raw ratios.
+const historicalAmbiguous=peer("after-mixed-factors",[],{raw:15});
+historicalAmbiguous.metered_data=20; // 10*1 + 5*2, not 15*1.333
+assert.throws(()=>plannedJob(historicalAmbiguous,"wg0","traffic",5,now,()=>""),/No active quota/);
+const acknowledged=plannedJob(historicalAmbiguous,"wg0","traffic",5,now,()=>"newquota",
+  {assumeWeightOne:true,replacementFactor:3});
+assert.equal(JSON.parse(acknowledged.Value).weight,"3");
+assert.equal(JSON.parse(acknowledged.Value).limit_gb,"25");
+
 const pWithQuota=peer("weighted",[trafficJob(20,1)],{raw:8});
 const weighted=plannedFactorJob(pWithQuota,"wg0",2);
 assert.equal(weighted.JobID,"quota-rule");
@@ -297,11 +294,14 @@ assert.match(ui,/Has data quota/);
 const settings=readFileSync("src/static/app/src/components/settingsComponent/peerDefaultSettings.vue","utf8");
 const settingForm=readFileSync("src/static/app/src/components/settingsComponent/peerTrafficFactorDefault.vue","utf8");
 assert.match(settings,/PeerTrafficFactorDefault/);
-assert.match(settingForm,/this admin browser/);
+assert.match(settingForm,/Stored on the SERVER/);
+assert.match(settingForm,/updateDashboardConfigurationItem/);
+assert.match(settingForm,/ONLY NEW upload\/download/);
 for(const page of ["peerAddModal.vue","peerCreate.vue"]) {
   const created=readFileSync("src/static/app/src/components/configurationComponents/"+page,"utf8");
-  assert.match(created,/factorForCreation/);
-  assert.match(created,/Traffic weight \(from Settings\)/);
+  assert.doesNotMatch(created,/factorForCreation/);
+  assert.match(created,/Traffic factor \(server default\)/);
+  assert.doesNotMatch(created,/traffic_factor: 1/);
 }
 assert.match(ui,/toggleSort\('name'\)/);
 assert.match(ui,/toggleSort\('status'\)/);

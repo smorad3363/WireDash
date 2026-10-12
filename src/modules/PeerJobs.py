@@ -5,6 +5,7 @@ import sqlalchemy
 import uuid
 from datetime import timedelta
 from .PeerLimits import quota_payload, quota_reached, parse_quota_payload
+from .PeerMeterLedger import checkpoint, factor, metered, reset_checkpoint
 
 from .DatabaseConnection import ConnectionString
 from .PeerJob import PeerJob
@@ -35,9 +36,21 @@ class PeerJobs:
             db.Column('Peer', db.String(255), primary_key=True),
             db.Column('Weight', db.String(32), nullable=False),
         )
+        self.meterTable = db.Table(
+            'PeerTrafficMeterState', self.metadata,
+            db.Column('Configuration', db.String(255), primary_key=True),
+            db.Column('Peer', db.String(255), primary_key=True),
+            db.Column('RawReceive', db.String(64), nullable=False),
+            db.Column('RawSent', db.String(64), nullable=False),
+            db.Column('BilledReceive', db.String(64), nullable=False),
+            db.Column('BilledSent', db.String(64), nullable=False),
+            db.Column('Factor', db.String(32), nullable=False)
+        )
         self.metadata.create_all(self.engine)
         self._weights = {}
+        self._meters = {}
         self._load_weights()
+        self._load_meters()
         self.__getJobs()
         self.JobLogger: PeerJobLogger = PeerJobLogger(self, DashboardConfig)
         self.WireguardConfigurations = WireguardConfigurations
@@ -70,6 +83,123 @@ class PeerJobs:
 
     def weight_for(self, configuration, peer):
         return self._weights.get((configuration, peer), "1")
+    def _load_meters(self):
+        with self.engine.connect() as conn:
+            rows = conn.execute(self.meterTable.select()).mappings().all()
+        self._meters = {
+            (r["Configuration"], r["Peer"]): {
+                "raw_receive": r["RawReceive"], "raw_sent": r["RawSent"],
+                "billed_receive": r["BilledReceive"], "billed_sent": r["BilledSent"],
+                "factor": r["Factor"]
+            } for r in rows
+        }
+
+    @staticmethod
+    def _total_raw(row):
+        return (float(row["total_receive"] or 0) + float(row["cumu_receive"] or 0),
+                float(row["total_sent"] or 0) + float(row["cumu_sent"] or 0))
+
+    def _raw_for(self, configuration, peer):
+        conf = self.WireguardConfigurations.get(configuration)
+        if conf is None:
+            raise ValueError("Configuration unavailable for traffic checkpoint")
+        for table in (conf.peersTable, conf.peersRestrictedTable):
+            with conf.engine.connect() as conn:
+                row = conn.execute(table.select().where(table.c.id == peer)).mappings().first()
+            if row is not None:
+                return self._total_raw(row)
+        raise ValueError("Peer no longer exists for traffic checkpoint")
+
+    def _save_weight(self, conn, configuration, peer, weight):
+        condition = db.and_(self.weightsTable.c.Configuration == configuration,
+                            self.weightsTable.c.Peer == peer)
+        if conn.execute(self.weightsTable.update().where(condition)
+                        .values(Weight=str(weight))).rowcount == 0:
+            conn.execute(self.weightsTable.insert().values(
+                Configuration=configuration, Peer=peer, Weight=str(weight)))
+
+    def _save_meter(self, conn, configuration, peer, state):
+        fields = {
+            "RawReceive": state["raw_receive"], "RawSent": state["raw_sent"],
+            "BilledReceive": state["billed_receive"], "BilledSent": state["billed_sent"],
+            "Factor": state["factor"]
+        }
+        condition = db.and_(self.meterTable.c.Configuration == configuration,
+                            self.meterTable.c.Peer == peer)
+        if conn.execute(self.meterTable.update().where(condition).values(**fields)).rowcount == 0:
+            conn.execute(self.meterTable.insert().values(
+                Configuration=configuration, Peer=peer, **fields))
+
+    def metered_usage_for(self, configuration, peer, received, sent):
+        key = (configuration, peer)
+        return metered(received, sent, self.weight_for(configuration, peer),
+                       self._meters.get(key))
+
+    def _rebase_weight(self, conn, configuration, peer, new_weight):
+        key = (configuration, peer)
+        receive, sent = self._raw_for(configuration, peer)
+        state = checkpoint(receive, sent, self.weight_for(configuration, peer),
+                           new_weight, self._meters.get(key))
+        self._save_meter(conn, configuration, peer, state)
+        self._save_weight(conn, configuration, peer, new_weight)
+        return state
+
+    def reset_meter(self, configuration, peer, mode, received, sent):
+        """Keep billing consistent with the existing explicit counter reset."""
+        key = (configuration, peer)
+        state = reset_checkpoint(received, sent, self.weight_for(configuration, peer),
+                                 self._meters.get(key), mode)
+        with self.engine.begin() as conn:
+            self._save_meter(conn, configuration, peer, state)
+        self._meters[key] = state
+
+    def apply_global_factor(self, new_weight, save_config):
+        """One explicitly requested global change; existing billed usage is frozen.
+
+        Runs on the old settings-update route, preserving the public JSON
+        request/response structure. SQLite records survive backup + restore.
+        """
+        try:
+            new_weight = str(factor(new_weight))
+            new_states = {}
+            updated_keys = set()
+            with self.engine.begin() as conn:
+                for name, conf in self.WireguardConfigurations.items():
+                    for table in (conf.peersTable, conf.peersRestrictedTable):
+                        with conf.engine.connect() as peer_conn:
+                            peers = peer_conn.execute(table.select()).mappings().all()
+                        for row in peers:
+                            key = (name, row["id"])
+                            if key in updated_keys:
+                                continue
+                            received, sent = self._total_raw(row)
+                            state = checkpoint(received, sent, self.weight_for(*key),
+                                               new_weight, self._meters.get(key))
+                            self._save_meter(conn, *key, state)
+                            self._save_weight(conn, *key, new_weight)
+                            new_states[key] = state
+                            updated_keys.add(key)
+                for job in self.Jobs:
+                    if job.Field != "quota_total_data" or (job.Configuration, job.Peer) not in updated_keys:
+                        continue
+                    limit, _ = parse_quota_payload(job.Value)
+                    conn.execute(self.peerJobTable.update().where(
+                        self.peerJobTable.c.JobID == job.JobID).values(
+                        Value=quota_payload(limit, new_weight)))
+                ok, message = save_config(new_weight)
+                if not ok:
+                    raise ValueError(message or "Could not save global factor")
+            for key, state in new_states.items():
+                self._meters[key] = state
+                self._weights[key] = new_weight
+            self.__getJobs()
+            for conf in self.WireguardConfigurations.values():
+                for p in conf.getPeersList():
+                    p.getJobs()
+            return True, ""
+        except Exception as e:
+            return False, str(e)
+
 
     def forget_weights(self, configuration, peers):
         """Reset factor on deletion; retain tombstone to block historic backfill."""
@@ -82,8 +212,12 @@ class PeerJobs:
                 if updated.rowcount == 0:
                     conn.execute(self.weightsTable.insert().values(
                         Configuration=configuration, Peer=peer, Weight="1"))
+                conn.execute(self.meterTable.delete().where(db.and_(
+                    self.meterTable.c.Configuration == configuration,
+                    self.meterTable.c.Peer == peer)))
         for peer in peers:
             self._weights[(configuration, peer)] = "1"
+            self._meters.pop((configuration, peer), None)
 
     def __getJobs(self):
         self.Jobs.clear()
@@ -126,8 +260,14 @@ class PeerJobs:
                 parse_quota_payload(Job.Value)
                 if Job.Action != "restrict":
                     return False, "Quota rules may only restrict access"
+            new_meter = None
             with self.engine.begin() as conn:
                 currentJob = self.searchJobById(Job.JobID)
+                if Job.Field == "quota_total_data":
+                    _, requested_weight = parse_quota_payload(Job.Value)
+                    if str(factor(self.weight_for(Job.Configuration, Job.Peer))) != str(requested_weight):
+                        new_meter = self._rebase_weight(conn, Job.Configuration,
+                                                        Job.Peer, str(requested_weight))
                 if len(currentJob) == 0:
                     conn.execute(
                         self.peerJobTable.insert().values(
@@ -172,6 +312,8 @@ class PeerJobs:
                             Configuration=Job.Configuration, Peer=Job.Peer, Weight=str(weight)))
             if Job.Field == "quota_total_data":
                 self._weights[(Job.Configuration, Job.Peer)] = str(weight)
+                if new_meter is not None:
+                    self._meters[(Job.Configuration, Job.Peer)] = new_meter
             self.__getJobs()
             self.WireguardConfigurations.get(Job.Configuration).searchPeer(Job.Peer)[1].getJobs()
             return True, list(
@@ -217,16 +359,24 @@ class PeerJobs:
                 (NewConfigurationName if c == ConfigurationName else c, p): value
                 for (c, p), value in self._weights.items()
             }
+            with self.engine.begin() as conn:
+                conn.execute(self.meterTable.update().where(
+                    self.meterTable.c.Configuration == ConfigurationName
+                ).values(Configuration=NewConfigurationName))
+            self._meters = {
+                (NewConfigurationName if c == ConfigurationName else c, p): state
+                for (c, p), state in self._meters.items()
+            }
             return True, None
         except Exception as e:
             return False, str(e)
     
     def provision_creation_limits(self, configuration, peer_ids, days, quota_gb, traffic_factor):
         """Create all policy jobs atomically; never record metering weights in logs."""
-        if not days and not quota_gb:
-            return True, None
         if not peer_ids:
             return False, "No created peers"
+        # Even without a quota, record the effective factor for future usage
+        # and future policy updates; do not inject new public API fields.
         now = datetime.now()
         records = []
         for peer in peer_ids:
@@ -243,19 +393,22 @@ class PeerJobs:
                     })
         try:
             with self.engine.begin() as conn:
-                conn.execute(self.peerJobTable.insert(), records)
-                if quota_gb:
-                    for peer in peer_ids:
-                        updated = conn.execute(self.weightsTable.update().where(db.and_(
-                            self.weightsTable.c.Configuration == configuration,
-                            self.weightsTable.c.Peer == peer
-                        )).values(Weight=str(traffic_factor)))
-                        if updated.rowcount == 0:
-                            conn.execute(self.weightsTable.insert().values(
-                                Configuration=configuration, Peer=peer, Weight=str(traffic_factor)))
-            if quota_gb:
+                if records:
+                    conn.execute(self.peerJobTable.insert(), records)
                 for peer in peer_ids:
-                    self._weights[(configuration, peer)] = str(traffic_factor)
+                    self._save_weight(conn, configuration, peer, str(traffic_factor))
+                    # New peers start at zero; remove any old tombstone/meter
+                    # snapshots for a recycled key, without changing counters.
+                    state = {"raw_receive":"0", "raw_sent":"0",
+                             "billed_receive":"0", "billed_sent":"0",
+                             "factor":str(traffic_factor)}
+                    self._save_meter(conn, configuration, peer, state)
+            for peer in peer_ids:
+                self._weights[(configuration, peer)] = str(traffic_factor)
+                self._meters[(configuration, peer)] = {
+                    "raw_receive":"0", "raw_sent":"0",
+                    "billed_receive":"0", "billed_sent":"0",
+                    "factor":str(traffic_factor)}
             self.__getJobs()
             # Peer models store their scheduled jobs locally for rendering.
             c = self.WireguardConfigurations.get(configuration)
@@ -294,7 +447,10 @@ class PeerJobs:
                             received = float(row["total_receive"] or 0) + float(row["cumu_receive"] or 0)
                             sent = float(row["total_sent"] or 0) + float(row["cumu_sent"] or 0)
                             if job.Field == "quota_total_data":
-                                runAction = quota_reached(received, sent, job.Value)
+                                limit, _ = parse_quota_payload(job.Value)
+                                billed = self.metered_usage_for(job.Configuration, job.Peer,
+                                                               received, sent)
+                                runAction = billed["total"] >= float(limit)
                             else:
                                 raw = {"total_receive": received, "total_sent": sent,
                                        "total_data": received + sent}[job.Field]

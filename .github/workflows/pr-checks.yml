@@ -43,11 +43,15 @@ jobs:
         run: node tests/test_peer_qr_auth.mjs
       - name: UI-only peer bulk manager and unchanged API contract
         run: node tests/test_peer_bulk_manager.mjs
-      - name: Reject any backend API changes in bulk UI PR
+      - name: Reject all API endpoint or client changes in forward metering PR
         if: github.event_name == 'pull_request'
         run: |
           git fetch --no-tags --depth=1 origin ${{ github.event.pull_request.base.sha }}
-          git diff --exit-code FETCH_HEAD HEAD -- src/dashboard.py src/client.py src/modules/
+          git diff --exit-code FETCH_HEAD HEAD -- src/client.py
+          git show FETCH_HEAD:src/dashboard.py > /tmp/wiredash-api-before.py
+          python3 tests/test_api_surface.py /tmp/wiredash-api-before.py src/dashboard.py
+      - name: Forward-only metering and fresh/update/backup contracts
+        run: python3 tests/test_forward_metering.py
 
       - name: ShellCheck
         run: shellcheck -S warning install.sh deploy/wgdashbackup.sh deploy/wgd-watchdog.sh tests/smoke.sh tests/run_synthetic_benchmark.sh
@@ -66,6 +70,15 @@ jobs:
           docker run --rm -v "$PWD/tests:/tests:ro" -e PYTHONPATH=/opt/wgdashboard/src -w /opt/wgdashboard/src \
             --entrypoint sh wiredash:pr-check -c \
             '/opt/wgdashboard/src/venv/bin/python3 /tests/test_performance_runtime.py'
+      - name: Forward metering SQLite integration after restart (isolated container)
+        run: |
+          docker run --rm --network none --read-only \
+            --tmpfs /tmp:rw,nosuid,nodev,size=64m \
+            -v "$PWD/tests:/tests:ro" \
+            -e PYTHONPATH=/opt/wgdashboard/src \
+            -w /opt/wgdashboard/src \
+            --entrypoint /opt/wgdashboard/src/venv/bin/python3 wiredash:pr-check \
+            /tests/test_forward_metering_runtime.py
       - name: Validate code baked into image
         run: docker run --rm -v "$PWD/tests:/tests:ro" --entrypoint python3 wiredash:pr-check /tests/check_patch.py /opt/wgdashboard/src/modules/PeerShareLinks.py
       - name: Check actual published UI and quota code in image
@@ -73,7 +86,7 @@ jobs:
           docker run --rm --entrypoint sh wiredash:pr-check -ec '
             test -f /opt/wgdashboard/src/modules/PeerLimits.py
             grep -Rq "Total upload + download" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
-            grep -Rq "Traffic weight" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
+            grep -Rq "Traffic factor (server default)" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
             grep -Rq "Validity (days" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
             grep -Rq "Download:" /opt/wgdashboard/src/static/dist/WGDashboardClient/assets
             grep -Rq "Upload:" /opt/wgdashboard/src/static/dist/WGDashboardClient/assets
@@ -83,8 +96,9 @@ jobs:
             grep -Rq "Could not load the peer configuration for QR" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
             grep -Rq "bulk-data-bar__label" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
             grep -Rq "Expired · Both" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
-            grep -Rq "Default traffic factor" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
+            grep -Rq "Global traffic factor" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
             grep -Rq "Set traffic factor" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
+            grep -Rq "WireGuard tunnel connection address" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
             grep -Rq "Data used (GB)" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
             grep -Rq "Upload, verify" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
           '

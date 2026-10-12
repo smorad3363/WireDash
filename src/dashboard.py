@@ -806,8 +806,16 @@ def API_updateDashboardConfigurationItem():
     data = request.get_json()
     if "section" not in data.keys() or "key" not in data.keys() or "value" not in data.keys():
         return ResponseObject(False, "Invalid request.")
-    valid, msg = DashboardConfig.SetConfig(
-        data["section"], data["key"], data['value'])
+    if data["section"] == "Peers" and data["key"] == "peer_traffic_factor":
+        # Keep the EXISTING configuration-setting endpoint and response
+        # contract. Freeze old billing and update all active peer rules before
+        # persisting this new global value.
+        valid, msg = AllPeerJobs.apply_global_factor(
+            data["value"], lambda value: DashboardConfig.SetConfig(
+                "Peers", "peer_traffic_factor", str(float(value))))
+    else:
+        valid, msg = DashboardConfig.SetConfig(
+            data["section"], data["key"], data['value'])
     if not valid:
         return ResponseObject(False, msg)
     if data['section'] == "Server":
@@ -1023,6 +1031,13 @@ def API_addPeers(configName):
 
             # Validate policy BEFORE provisioning any tunnel/peer.
             duration_days, quota_gb, traffic_factor = parse_creation_limits(data)
+            if "traffic_factor" not in data:
+                # Bot/API callers that do not send a factor inherit the
+                # persistent server default. Explicit request values take
+                # precedence, including 1. Unchanged API input schema.
+                from modules.PeerMeterLedger import factor as validated_factor
+                traffic_factor = validated_factor(
+                    DashboardConfig.GetConfig("Peers", "peer_traffic_factor")[1])
             bulkAdd: bool = data.get("bulkAdd", False)
             bulkAddAmount: int = data.get('bulkAddAmount', 0)
             preshared_key_bulkAdd: bool = data.get('preshared_key_bulkAdd', False)

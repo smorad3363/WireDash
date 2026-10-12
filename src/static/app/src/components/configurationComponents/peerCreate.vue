@@ -13,7 +13,7 @@ import PersistentKeepAliveInput
 import {DashboardConfigurationStore} from "@/stores/DashboardConfigurationStore.js";
 import BulkAdd from "@/components/configurationComponents/newPeersComponents/bulkAdd.vue";
 import LocaleText from "@/components/text/localeText.vue";
-import {factorForCreation, readTrafficFactor} from "@/utilities/peerTrafficDefaults.mjs";
+
 
 export default {
 	name: "peerCreate",
@@ -30,7 +30,6 @@ export default {
 				bulkAddAmount: 0,
 				duration_days: 0,
 				quota_gb: 0,
-				traffic_factor: 1,
 				name: "",
 				allowed_ips: [],
 				private_key: "",
@@ -90,7 +89,7 @@ export default {
 			}
 			const d = Number(this.data.duration_days);
 			const q = Number(this.data.quota_gb);
-			const f = Number(this.data.traffic_factor);
+			const f = 1; // Omitted API factor inherits the server default.
 			return status && Number.isInteger(d) && d >= 0 && d <= 3650 &&
 				Number.isFinite(q) && q >= 0 && q <= 1000000 &&
 				Number.isFinite(f) && f >= 0.1 && f <= 10 && (q > 0 || f === 1);
@@ -105,9 +104,7 @@ export default {
 				this.data.bulkAddAmount = "";
 			}
 		},
-		'data.quota_gb'(q){
-        this.data.traffic_factor = factorForCreation(q, readTrafficFactor());
-		},
+
 		'data.bulkAddAmount'(){
 			if (this.data.bulkAddAmount > this.availableIp.length){
 				this.data.bulkAddAmount = this.availableIp.length;
@@ -157,9 +154,9 @@ export default {
           v-model.number="this.data.quota_gb" :disabled="saving">
       </div>
       <div class="col-md-4">
-        <label class="form-label small">Traffic weight (from Settings)</label>
-        <div class="form-control form-control-sm bg-body-tertiary" aria-label="Traffic factor from Peers Settings">{{this.data.traffic_factor}}×</div>
-        <small class="text-muted">Change in Settings → Peers Settings.</small>
+        <label class="form-label small">Traffic factor (server default)</label>
+        <div class="form-control form-control-sm bg-body-tertiary" aria-label="Traffic factor from Peers Settings">{{this.dashboardStore.Configuration.Peers.peer_traffic_factor || 1}}×</div>
+        <small class="text-muted">Change globally in Settings → Peers Settings.</small>
       </div>
     </div>
     <small class="text-muted">Traffic limit checks the sum of upload and download. Charts and usage counters always show raw traffic. For bulk creation, the limits apply to every new peer.</small>

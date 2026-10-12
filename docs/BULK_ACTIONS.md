@@ -37,28 +37,64 @@ explicitly that it is a composition chart, NOT quota progress. A genuine
 0-GB used peer correctly has an empty bar. Time shows short remaining
 days/hours; tooltip includes the exact known expiry when available.
 
-## Default traffic factor and existing peers
+## Server-wide traffic factor and forward-only billing
 
-Under **Settings → Peers Settings**, an admin can save a preferred default
-factor (0.1–10). Because the LEGACY API has no server-shared factor-setting
-field, this default uses **local browser storage**. It is NOT synchronized
-across administrators/browsers. Saving it does not alter old peer jobs or
-the server's stored metering factors. Both peer creation flows (single and
-bulk) automatically use this default for NEW users that have a data quota.
-The legacy creation contract still requires `traffic_factor=1` for
-quota=0/unlimited peers.
+**Settings → Peers Settings → Global traffic factor** persists the factor
+(0.1–10) in `/data/wg-dashboard.ini` through the EXISTING configuration
+setting endpoint. No browser-local storage is used. The change applies to
+**all currently existing users**, restricted or allowed. The per-peer
+`PeerTrafficMeterState` checkpoints in the existing `wgdashboard_job.db`
+freeze billed upload and download just before switching weights; only NEW
+usage is multiplied by the new factor. Example: 10 GB at 1× then 5 GB at
+2× remains **20 GB billed** (not 30). Quota limits stay constant. The
+scheduler checks this forward-billed total, never raw lifetime usage
+multiplied by the latest factor. Explicit counter resets also update
+checkpoints. Database snapshots and the INI are both in existing host
+backups; restarting or restoring preserves them.
 
-To change already-existing peers, select users with **Has data quota**
-in Bulk Manager and choose **Set factor**. An individual preview shows
-the unchanged GB quota, previous/new factor and projected billed usage.
-A separate checkbox explicitly acknowledges that the new factor could
-immediately exhaust an existing quota. This calls the existing
-`savePeerScheduleJob` endpoint with the same JobID and quota, editing only
-the stored `weight`. Missing, expired or legacy/ambiguous active quotas
-cannot be changed via that API and are skipped/blocked by preview. Restricted
-peers still need the explicit temporary allow-and-restrict consent and
-verification already documented below. No automatic action is run just
-because an admin saved a default.
+The old `POST /api/addPeers/<configuration>` request field
+`traffic_factor` already exists. Explicitly supplied factor values keep
+their precedence; when missing, server defaults to
+`Peers.peer_traffic_factor`. The response, endpoint, method and field
+names stay unchanged. Both admin creation forms OMIT the factor key,
+allowing the server to choose the default even for a quota-free peer.
+Explicit factors now work with or without a quota; even unlimited
+users can have future traffic metered at the requested weight.
+Existing bots that explicitly send 1 continue to get 1.
+
+The optional **Bulk Manager → Has data quota → Set factor** can apply an
+explicit factor to selected peers with supported active quotas through the
+existing `savePeerScheduleJob` API. The individual preview displays
+unchanged historical billed usage and quota. Changing this factor also
+checkpoints old usage, so nothing is retroactively reweighted. Restricted
+peers still require explicit temporary access / verification as described
+below. This is NOT required to apply a new GLOBAL factor; the global
+setting updates allowed/restricted peers directly in server storage.
+
+With a closed/missing quota, a past average of metered/raw traffic can
+NOT identify the current factor after multiple rate changes. Bulk renewal
+therefore fails closed until the admin explicitly accepts the SERVER
+default for a new quota job.
+
+## Installation defaults, first connection and restore
+
+On a genuinely NEW configuration only: DNS
+`1.1.1.1,8.8.8.8,9.9.9.9`, endpoint allowed IPs
+`0.0.0.0/0`, peer MTU `1280`, keepalive `21`, global
+factor `1.0`. The existing wireguard interface MTU behavior is
+unchanged. Fresh installs deliberately leave `Peers.remote_endpoint`
+empty. During initial admin account setup, the form asks for the
+public IP/DNS connection HOST, saving it via the old
+`updateDashboardConfigurationItem` endpoint before completing setup.
+The WireGuard port is added later by existing peer config generation.
+
+Existing deployed/restored `wg-dashboard.ini` values are NEVER
+overwritten by these new defaults. The setup wizard is not shown on
+previously configured panels. Online backups already include the FULL
+`/data` folder including INI and a CONSISTENT online SQLite snapshot
+of `wgdashboard_job.db`; restore transfers global settings and traffic
+checkpoint history to a new VPS. Restoring a previous Endpoint never
+autocorrects it to the new server IP: update manually if networking differs.
 
 Multiple-page selection is maintained in the modal, with distinct
 "select page" and "select all matching" controls. Maximum **200 peers
@@ -97,9 +133,9 @@ across DST boundaries.
   **additional metered GB**: new limit = max(old quota, current metered usage)
   + added GB. It does NOT zero previous usage or silently use an exhausted
   quota as the base. Existing active quota weights are retained. If a quota
-  rule has already closed, raw/metered counters infer the persistent weight
-  when usage is positive. At zero usage, prior weight cannot be inferred:
-  explicit consent for factor 1 is required, or that peer is skipped.
+  rule has already closed, the current factor cannot be inferred from
+  weighted/raw history; the operator must explicitly accept the current
+  SERVER default factor or the peer is skipped.
 - **Restricted-peer renewal safety:** the existing Save Job endpoint rejects
   restricted peers, and no other old endpoint can save such a job directly.
   The operator must explicitly consent to a short period of temporary access
@@ -124,15 +160,18 @@ cannot verify that original restrictions are restored. A changed policy does
 not automatically clear a previously imposed restriction: explicitly Allow
 Access only after considering other limits.
 
-No new route, request parameter, authorization rule, backend method, JSON
-response field, or bot API behavior is introduced.
+No new route, request parameter, HTTP method, authentication rule, or
+response field is introduced. The existing optional request field
+`traffic_factor` now defaults to server config when omitted. Internal
+metering/persistence has intentionally changed to implement forward-only
+consumption.
 
 ## Rollback
 
-The previous published release is pinned at
-`backup/pre-data-sort-weight-settings-2026-10-12`, commit
-`e9697a05cecd51f572688d5d1f53f451b3d343b8`, with immutable
-Docker image `ghcr.io/smorad3363/wiredash:sha-e9697a05cecd51f572688d5d1f53f451b3d343b8`.
+The immediately previous published release is pinned at
+`backup/pre-global-metering-setup-2026-10-12`, commit
+`fdd62e659b405c6112562c832774474c7b1fef12`, with immutable
+Docker image `ghcr.io/smorad3363/wiredash:sha-fdd62e659b405c6112562c832774474c7b1fef12`.
 The older pre-Bulk Manager snapshot also remains at
 `backup/pre-bulk-actions-2026-10-12`,
 `8c05f0abb3b11ee509c44b7c531f667df5626cdb`.
@@ -144,3 +183,12 @@ container while preserving volumes, then validate the panel, WireGuard
 interfaces and persisted peer state. A rollback to an earlier database
 snapshot (if ever necessary) is a separate operator-controlled step and
 may lose changes since that backup.
+
+**Important rollback warning:** once global or individual traffic factors
+have changed and new forward-only usage has accrued, older WireDash images
+cannot interpret the new billing checkpoints and may display/enforce
+INCORRECT quota usage. Do NOT perform a binary-only rollback in that
+situation. Safest rollback is restoring a matched PRE-UPGRADE database +
+INI snapshot and application image together, with operator consent to
+lose updates since that snapshot. A source branch or Docker image alone
+does not reverse meter-state changes.

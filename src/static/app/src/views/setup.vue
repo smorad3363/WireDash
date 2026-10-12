@@ -18,6 +18,8 @@ export default {
 				enable_totp: true
 			},
 			loading: false,
+            endpointStep: false,
+            tunnelEndpoint: "",
 			errorMessage: "",
 			done: false
 		}
@@ -31,8 +33,36 @@ export default {
 		}
 	},
 	methods: {
-		submit(){
-			this.loading = true
+        async submit(){
+            if (!this.endpointStep && this.store.Configuration?.Peers?.remote_endpoint === "") {
+                this.endpointStep = true;
+                return;
+            }
+            if (this.endpointStep) {
+                const endpoint = this.tunnelEndpoint.trim();
+                // This field is the host ONLY; the WG listen port is appended
+                // by the existing configuration generator.
+                if (!endpoint || endpoint.includes("://") || /\s/.test(endpoint)) {
+                    this.errorMessage = "Enter a public IP address or domain without a port or URL scheme.";
+                    return;
+                }
+            }
+			this.loading = true;
+            this.errorMessage = "";
+            if (this.endpointStep) {
+                let setEndpoint;
+                try {
+                    await fetchPost("/api/updateDashboardConfigurationItem", {
+                        section:"Peers", key:"remote_endpoint", value:this.tunnelEndpoint.trim()
+                    }, res => {setEndpoint = res;});
+                    if (!setEndpoint?.status) throw new Error(setEndpoint?.message || "Could not save endpoint.");
+                    this.store.Configuration.Peers.remote_endpoint = this.tunnelEndpoint.trim();
+                } catch(e) {
+                    this.loading = false;
+                    this.errorMessage = e?.message || "Could not save endpoint.";
+                    return;
+                }
+            }
 			fetchPost("/api/Welcome_Finish", this.setup, (res) => {
 				if (res.status){
 					this.done = true;
@@ -72,7 +102,7 @@ export default {
 					{{this.errorMessage}}
 				</div>
 				<div class="d-flex flex-column gap-3">
-					<form id="createAccount" class="d-flex flex-column gap-2">
+					<form v-if="!endpointStep" id="createAccount" class="d-flex flex-column gap-2">
 						<div class="form-group text-body">
 							<label for="username" class="mb-1 text-muted">
 								<small>
@@ -121,11 +151,26 @@ export default {
 <!--						</Transition>-->
 <!--					</Suspense>-->
 					
+                    <div v-if="endpointStep" class="border rounded-3 p-3 d-flex flex-column gap-2">
+                        <label for="initial-peer-endpoint" class="fw-semibold">
+                            WireGuard tunnel connection address
+                        </label>
+                        <p class="small text-muted mb-0">
+                            Enter the SERVER's public IP or DNS hostname (without http://
+                            or a port). We append each WireGuard listen port automatically.
+                            This will be saved with backups and will not be replaced on update/restore.
+                        </p>
+                        <input id="initial-peer-endpoint" v-model.trim="tunnelEndpoint"
+                          class="form-control" type="text" autocomplete="off"
+                          placeholder="vpn.example.com" maxlength="253" required>
+                        <button type="button" class="btn btn-sm btn-link align-self-start"
+                           :disabled="loading" @click="endpointStep = false">Back to account</button>
+                    </div>
 					<button class="btn btn-dark btn-lg mb-5 d-flex btn-brand shadow align-items-center" 
 					        ref="signInBtn"
-					        :disabled="!this.goodToSubmit || this.loading || this.done" @click="this.submit()">
+					        :disabled="(!endpointStep && !this.goodToSubmit) || (endpointStep && !tunnelEndpoint.trim()) || this.loading || this.done" @click="this.submit()">
 						<span class="d-flex align-items-center w-100" v-if="!this.loading && !this.done">
-							<LocaleText t="Next"></LocaleText>
+							{{endpointStep ? "Finish setup" : "Next"}}
 							
 							<i class="bi bi-chevron-right ms-auto"></i></span>
 						<span class="d-flex align-items-center w-100" v-else>
