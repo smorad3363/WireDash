@@ -16,6 +16,7 @@ import PersistentKeepAliveInput
 	from "@/components/configurationComponents/newPeersComponents/persistentKeepAliveInput.vue";
 import {WireguardConfigurationsStore} from "@/stores/WireguardConfigurationsStore.js";
 import NotesInput from "./newPeersComponents/notesInput.vue";
+import {factorForCreation, readTrafficFactor} from "@/utilities/peerTrafficDefaults.mjs";
 
 const dashboardStore = DashboardConfigurationStore()
 const wireguardStore = WireguardConfigurationsStore()
@@ -76,7 +77,7 @@ const allRequireFieldsFilled = computed(() => {
 })
 
 watch(() => peerData.value.quota_gb, (quota) => {
-	if (!(quota > 0)) peerData.value.traffic_factor = 1;
+  peerData.value.traffic_factor = factorForCreation(quota, readTrafficFactor());
 })
 
 const peerCreate = () => {
@@ -138,9 +139,9 @@ watch(() => {
           v-model.number="peerData.quota_gb" :disabled="saving">
       </div>
       <div class="col-md-4">
-        <label class="form-label small" for="limit-weight-modal">Traffic weight</label>
-        <input id="limit-weight-modal" type="number" min="0.1" max="10" step="0.1" class="form-control form-control-sm"
-          v-model.number="peerData.traffic_factor" :disabled="saving || !(peerData.quota_gb > 0)">
+        <label class="form-label small">Traffic weight (from Settings)</label>
+        <div class="form-control form-control-sm bg-body-tertiary" aria-label="Traffic factor from Peers Settings">{{peerData.traffic_factor}}×</div>
+        <small class="text-muted">Change in Settings → Peers Settings.</small>
       </div>
     </div>
     <small class="text-muted">Traffic limit checks the sum of upload and download. Charts and usage counters always show raw traffic. For bulk creation, the limits apply to every new peer.</small>
