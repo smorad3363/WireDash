@@ -447,7 +447,7 @@ const executeAction = async () => {
                       :role="item.dataBar.hasQuota ? 'progressbar' : 'img'"
                       :aria-valuemin="item.dataBar.hasQuota ? 0 : undefined"
                       :aria-valuemax="item.dataBar.hasQuota ? item.dataBar.quota : undefined"
-                      :aria-valuenow="item.dataBar.hasQuota ? item.dataBar.used : undefined"
+                      :aria-valuenow="item.dataBar.hasQuota ? Math.min(item.dataBar.used, item.dataBar.quota) : undefined"
                       :aria-label="item.dataBar.details" :title="item.dataBar.details">
                       <div class="bulk-data-bar__segments" aria-hidden="true">
                         <span class="bulk-data-bar__download" :style="{width:item.dataBar.downloadPct+'%'}"></span>
@@ -571,3 +571,106 @@ const executeAction = async () => {
     </div>
   </div>
 </template>
+
+<style scoped>
+/* Table stays usable at desktop widths; narrow screens scroll horizontally. */
+.bulk-table { min-width: 790px; }
+.bulk-table thead th {
+  background: var(--bs-body-bg);
+  color: var(--bs-body-color);
+  z-index: 1;
+  vertical-align: middle;
+}
+.bulk-check-col { width: 38px; }
+.bulk-sort {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .5rem;
+  padding: .3rem .15rem;
+  border: 0;
+  border-radius: .25rem;
+  background: transparent;
+  color: inherit;
+  width: 100%;
+  text-align: start;
+  font: inherit;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.bulk-sort:hover:not(:disabled) { color: var(--bs-primary); }
+.bulk-sort:focus-visible { outline: 2px solid var(--bs-primary); outline-offset: 2px; }
+.bulk-sort:disabled { cursor: default; opacity: .65; }
+.bulk-sort-icon { font-size: .7rem; opacity: .72; min-width: 1em; }
+.bulk-user-name { max-width: 180px; overflow-wrap: anywhere; }
+.bulk-user-detail { font-size: .74rem; max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
+.bulk-time { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bulk-status {
+  display: inline-block;
+  padding: .23rem .48rem;
+  border-radius: .4rem;
+  font-size: .73rem;
+  font-weight: 700;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+.bulk-status--time { color: #78350f; background: #fef3c7; border-color: #f59e0b; }
+.bulk-status--data { color: #1e40af; background: #dbeafe; border-color: #93c5fd; }
+.bulk-status--both { color: #9f1239; background: #ffe4e6; border-color: #fda4af; }
+.bulk-status--review { color: #334155; background: #e2e8f0; border-color: #94a3b8; }
+.bulk-status--restricted { color: #7c2d12; background: #ffedd5; border-color: #fdba74; }
+.bulk-status--soon { color: #713f12; background: #fef9c3; border-color: #eab308; }
+.bulk-status--active { color: #166534; background: #dcfce7; border-color: #86efac; }
+
+/* ONE stacked download/upload progress graphic with the only visible
+   number inside it. A separate opaque label keeps text readable over either
+   bar colour, including when usage reaches 100%. Theme vars adapt dark mode. */
+.bulk-data-bar {
+  width: 154px;
+  min-width: 130px;
+  height: 27px;
+  border: 1px solid var(--bs-border-color, #94a3b8);
+  border-radius: .45rem;
+  position: relative;
+  overflow: hidden;
+  background: var(--bs-tertiary-bg, #e2e8f0);
+  margin-block: .2rem;
+}
+.bulk-data-bar__segments {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  overflow: hidden;
+}
+.bulk-data-bar__segments span { display: block; height: 100%; flex: 0 0 auto; }
+.bulk-data-bar__download { background: #2563eb; }
+.bulk-data-bar__upload { background: #0d9488; }
+.bulk-data-bar__other { background: #6366f1; }
+.bulk-data-bar__label {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  padding: .05rem .42rem;
+  min-width: 63px;
+  text-align: center;
+  border-radius: .33rem;
+  border: 1px solid var(--bs-border-color, #94a3b8);
+  background: var(--bs-body-bg, #fff);
+  color: var(--bs-body-color, #0f172a);
+  box-shadow: 0 0 0 1px rgba(0,0,0,.08);
+  font-size: .73rem;
+  font-family: var(--bs-font-monospace, monospace);
+  font-weight: 750;
+  line-height: 1.35;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.bulk-data-bar--warning { border-color: #d97706; border-width: 2px; }
+.bulk-data-bar--exhausted { border-color: #be123c; border-width: 2px; }
+.bulk-data-bar--unknown { border-style: dashed; }
+:global([data-bs-theme="dark"]) .bulk-data-bar__download { background: #60a5fa; }
+:global([data-bs-theme="dark"]) .bulk-data-bar__upload { background: #2dd4bf; }
+:global([data-bs-theme="dark"]) .bulk-data-bar__other { background: #a5b4fc; }
+</style>
