@@ -46,12 +46,13 @@ class DashboardConfig:
                 "dashboard_language": "en-US"
             },
             "Peers": {
-                "peer_global_DNS": "1.1.1.1",
+                "peer_global_DNS": "1.1.1.1,8.8.8.8,9.9.9.9",
                 "peer_endpoint_allowed_ip": "0.0.0.0/0",
                 "peer_display_mode": "grid",
                 "remote_endpoint": GetRemoteEndpoint(),
-                "peer_MTU": "1420",
-                "peer_keep_alive": "21"
+                "peer_MTU": "1280",
+                "peer_keep_alive": "21",
+                "peer_traffic_factor": "1.0"
             },
             "Other": {
                 "welcome_session": "true"
@@ -98,6 +99,7 @@ class DashboardConfig:
         self.__createAPIKeyTable()
         self.DashboardAPIKeys = self.__getAPIKeys()
         self.APIAccessed = False
+        self.on_traffic_factor_change = None
         self.SetConfig("Server", "version", DashboardConfig.DashboardVersion)
 
     def EnsureDatabaseIntegrity(self, wireguardConfigurations):
@@ -222,6 +224,14 @@ class DashboardConfig:
             return False, "Field cannot be empty!"
         if section == "Peers" and key == "peer_global_dns" and len(value) > 0:
             return ValidateDNSAddress(value)
+        if section == "Peers" and key == "peer_traffic_factor":
+            try:
+                from decimal import Decimal
+                factor = Decimal(str(value))
+                if not factor.is_finite() or not Decimal("0.1") <= factor <= Decimal("10"):
+                    return False, "Traffic factor must be 0.1 to 10"
+            except Exception:
+                return False, "Invalid traffic factor"
         if section == "Peers" and key == "peer_endpoint_allowed_ip":
             value = value.split(",")
             for i in value:
@@ -256,6 +266,27 @@ class DashboardConfig:
             valid, msg = self.__configValidation(section, key, value)
             if not valid:
                 return False, msg
+
+        if section == "Peers" and key == "peer_traffic_factor" and not init:
+            # Reuse the EXISTING settings endpoint. The hook stores new factor
+            # epochs for all peers; no bot API shape or new endpoint is added.
+            old = self.GetConfig("Peers", "peer_traffic_factor")[1]
+            new_factor = str(value)
+            if str(old) == new_factor:
+                return True, ""
+            previous = self.__config["Peers"]["peer_traffic_factor"]
+            self.__config["Peers"]["peer_traffic_factor"] = new_factor
+            if not self.SaveConfig():
+                self.__config["Peers"]["peer_traffic_factor"] = previous
+                return False, "Could not persist global factor"
+            try:
+                if self.on_traffic_factor_change is not None:
+                    self.on_traffic_factor_change(new_factor)
+            except Exception:
+                self.__config["Peers"]["peer_traffic_factor"] = previous
+                self.SaveConfig()
+                return False, "Failed to update factors; previous global setting restored"
+            return True, ""
 
         if section == "Account" and key == "password":
             if not init:
