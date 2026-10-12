@@ -1,5 +1,5 @@
 <script setup>
-import {onMounted, onUnmounted, ref} from "vue";
+import {computed, onMounted, onUnmounted, ref} from "vue";
 import {fetchGet, fetchPost, getUrl} from "@/utilities/fetch.js";
 
 const status = ref(null)
@@ -68,6 +68,18 @@ const password = ref("")
 const totp = ref("")
 const restoreProgress = ref(null)
 const restoreDisconnected = ref(false)
+const dismissKey = "wiredash.backup.dismissedRestoreJobId"
+const getDismissed = () => {
+  try { return localStorage.getItem(dismissKey) || ""; } catch { return ""; }
+}
+const dismissedRestoreJobId = ref(getDismissed())
+const visibleRestoreProgress = computed(() =>
+  restoreProgress.value && restoreProgress.value.jobId !== dismissedRestoreJobId.value)
+const dismissRestoreProgress = () => {
+  if (!restoreProgress.value || !["completed", "failed"].includes(restoreProgress.value.state)) return
+  dismissedRestoreJobId.value = restoreProgress.value.jobId
+  try { localStorage.setItem(dismissKey, dismissedRestoreJobId.value) } catch {}
+}
 const restorePhases = {
   queued: "Restore scheduled on host",
   preparing: "Preparing restore directories",
@@ -249,8 +261,13 @@ onUnmounted(() => {
         Backup and restore are unavailable until it is installed.
       </div>
       <template v-else>
-        <div v-if="restoreProgress" class="border rounded-3 p-3 d-flex flex-column gap-2" aria-live="polite">
-          <h6 class="mb-0">Full restore progress</h6>
+        <div v-if="visibleRestoreProgress" class="border rounded-3 p-3 d-flex flex-column gap-2" aria-live="polite">
+          <div class="d-flex justify-content-between align-items-center gap-2">
+            <h6 class="mb-0">Full restore progress</h6>
+            <button v-if="['completed','failed'].includes(restoreProgress.state)"
+                    type="button" class="btn btn-sm btn-outline-secondary"
+                    @click="dismissRestoreProgress">Dismiss</button>
+          </div>
           <div class="d-flex justify-content-between align-items-center small">
             <strong>{{restorePhases[restoreProgress.phase] || restoreProgress.phase}}</strong>
             <span>{{restoreProgress.percent}}% of milestones</span>
@@ -303,7 +320,11 @@ onUnmounted(() => {
             listed unless their file IDs were recorded.
           </p>
           <div v-if="!botBackups.length" class="small text-muted">
-            No cataloged bot backups yet. New backups will appear automatically after successful delivery.
+            No fully cataloged bot backups yet. Receiving some Telegram parts does not
+            guarantee all parts were accepted: the library appears only after
+            every file ID is recorded and verified. An incomplete upload is
+            retried on the next backup run. Bot API cannot retrieve file IDs
+            from older Telegram history without an existing catalog.
           </div>
           <div v-for="item in botBackups" :key="item.name"
                class="d-flex flex-wrap align-items-center gap-2 py-2 border-bottom small">

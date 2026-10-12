@@ -226,16 +226,20 @@ def _bot_call(token, method, fields, attachments=()):
 
 
 def send_archive(name, folder):
+    """Send all parts and catalog their file IDs with resumable checkpoints.
+
+    A Telegram album can fail after some documents were accepted. Previously
+    NO file IDs were written until the last part completed; consequently the
+    bot library could be empty despite messages appearing in Telegram. Save
+    root-only checkpoints after EVERY successful batch and resume unfinished
+    sends without resending acknowledged parts.
+    """
     if not NAME.fullmatch(name):
         raise ValueError("Unsupported backup name")
     folder = Path(folder)
-    source = folder / name
     parts = sorted(folder.glob(name + ".part-*"))
     if not parts:
-        # Small (<=18MB) snapshots are kept in the persistent output folder,
-        # not inside the working/split-part directory.
-        source = importer.ARCHIVES / name
-        parts = [source]
+        parts = [importer.ARCHIVES / name]
     if not 1 <= len(parts) <= MAX_PARTS:
         raise ValueError("Telegram backup exceeds permitted part count")
     if not all(p.is_file() and 0 < p.stat().st_size <= PART_BYTES for p in parts):
@@ -252,87 +256,134 @@ def send_archive(name, folder):
     checksum = digest.hexdigest()
     token, chat = credentials()
     total_size = sum(p.stat().st_size for p in parts)
-    intro = _bot_call(token, "sendMessage", {
-        "chat_id": chat,
-        "text": ("📦 WireDash FULL BACKUP\n" + name +
-                 "\nSize: %.1f MiB | Parts: %s\nSHA256: %s\n"
-                 "All parts below belong to this backup." %
-                 (total_size / 1048576, len(parts), checksum))
-    })
-    header_id = intro.get("message_id") if isinstance(intro, dict) else None
-    if not isinstance(header_id, int):
-        raise ValueError("Telegram did not return header message ID")
-    intro_chat = intro.get("chat") if isinstance(intro.get("chat"), dict) else {}
-    chat_id = intro_chat.get("id")
-    if type(chat_id) is not int:
-        chat_id = int(chat) if chat.lstrip("-").isdigit() else None
-    chat_username = intro_chat.get("username", "")
-    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{4,31}", str(chat_username)):
-        candidate = chat[1:] if chat.startswith("@") else ""
-        chat_username = candidate if re.fullmatch(
-            r"[A-Za-z][A-Za-z0-9_]{4,31}", candidate) else None
-    files = []
+    fingerprint = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    pending_path = CATALOG / (name + ".partial.json")
+    pending = None
+    if pending_path.exists():
+        if pending_path.is_symlink():
+            raise ValueError("Unsafe Telegram upload checkpoint")
+        try:
+            pending = json.loads(pending_path.read_text())
+        except (OSError, ValueError) as exc:
+            raise ValueError("Unreadable Telegram upload checkpoint") from exc
+        if (not isinstance(pending, dict) or pending.get("name") != name or
+                pending.get("sha256") != checksum or pending.get("bytes") != total_size or
+                pending.get("bot") != fingerprint or pending.get("chat") != chat):
+            raise ValueError("Telegram upload checkpoint does not match this archive/chat")
+    if pending is None:
+        intro = _bot_call(token, "sendMessage", {
+            "chat_id": chat,
+            "text": ("📦 WireDash FULL BACKUP\n" + name +
+                     "\nSize: %.1f MiB | Parts: %s\nSHA256: %s\n"
+                     "All parts below belong to this backup." %
+                     (total_size / 1048576, len(parts), checksum))
+        })
+        header_id = intro.get("message_id") if isinstance(intro, dict) else None
+        if type(header_id) is not int or header_id <= 0:
+            raise ValueError("Telegram did not return header message ID")
+        intro_chat = intro.get("chat") if isinstance(intro.get("chat"), dict) else {}
+        chat_id = intro_chat.get("id")
+        if type(chat_id) is not int:
+            chat_id = int(chat) if chat.lstrip("-").isdigit() else None
+        chat_username = intro_chat.get("username", "")
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{4,31}", str(chat_username)):
+            candidate = chat[1:] if chat.startswith("@") else ""
+            chat_username = candidate if re.fullmatch(
+                r"[A-Za-z][A-Za-z0-9_]{4,31}", candidate) else None
+        pending = {"name": name, "sha256": checksum, "bytes": total_size,
+                   "bot": fingerprint, "chat": chat, "created": int(time.time()),
+                   "header_message_id": header_id, "files": []}
+        if chat_id is not None:
+            pending["chat_id"] = chat_id
+        if chat_username:
+            pending["chat_username"] = chat_username
+        _atomic_json(pending_path, pending)
+    header_id = pending["header_message_id"]
+    accepted = {}
+    for item in pending.get("files", []):
+        if not isinstance(item, dict) or item.get("name") in accepted:
+            raise ValueError("Telegram upload checkpoint has duplicate/invalid entries")
+        accepted[item.get("name")] = item
+    expected = {p.name: p.stat().st_size for p in parts}
+    if any(n not in expected or obj.get("bytes") != expected[n] or
+           not FILE_ID.fullmatch(str(obj.get("file_id", "")))
+           for n, obj in accepted.items()):
+        raise ValueError("Invalid Telegram upload checkpoint contents")
+
+    def accept(part, msg):
+        doc = msg.get("document") if isinstance(msg, dict) else None
+        if (not isinstance(doc, dict) or
+                not FILE_ID.fullmatch(str(doc.get("file_id", ""))) or
+                doc.get("file_size") != part.stat().st_size):
+            raise ValueError("Telegram returned a mismatched document")
+        record = {"name": part.name, "bytes": part.stat().st_size,
+                  "file_id": doc["file_id"]}
+        mid = msg.get("message_id")
+        if type(mid) is int and mid > 0:
+            record["message_id"] = mid
+        accepted[part.name] = record
+
+    def checkpoint():
+        pending["files"] = [accepted[p.name] for p in parts if p.name in accepted]
+        _atomic_json(pending_path, pending)
+
+    def send_one(part, index):
+        caption = "WGDashboard %s | PART %s/%s | SHA256 %s" % (
+            name, index + 1, len(parts), checksum)
+        return _bot_call(token, "sendDocument", {
+            "chat_id": chat, "caption": caption,
+            "reply_parameters": json.dumps({"message_id": header_id}),
+            "document": "@" + str(part) + ";filename=" + part.name
+        })
+
     for start in range(0, len(parts), 10):
-        batch = parts[start:start + 10]
-        captions = [
-            "WGDashboard %s | PART %s/%s | SHA256 %s" %
-            (name, start + offset + 1, len(parts), checksum)
-            for offset, _ in enumerate(batch)
-        ]
-        if len(batch) == 1:
-            item = _bot_call(token, "sendDocument", {
-                "chat_id": chat,
-                "caption": captions[0],
-                "reply_parameters": json.dumps({"message_id": header_id}),
-                "document": "@"+str(batch[0])+";filename="+batch[0].name,
-            })
-            messages = [item]
-        else:
+        batch = [(i, p) for i, p in enumerate(parts[start:start + 10], start)
+                 if p.name not in accepted]
+        if not batch:
+            continue
+        if len(batch) >= 2:
             media = [
                 {"type": "document", "media": "attach://file" + str(i),
-                 "caption": captions[i]}
-                for i in range(len(batch))
+                 "caption": "WGDashboard %s | PART %s/%s | SHA256 %s" %
+                            (name, index + 1, len(parts), checksum)}
+                for i, (index, _part) in enumerate(batch)
             ]
-            messages = _bot_call(token, "sendMediaGroup", {
-                "chat_id": chat, "media": json.dumps(media),
-                "reply_parameters": json.dumps({"message_id": header_id}),
-            }, attachments=batch)
-        if not isinstance(messages, list) or len(messages) != len(batch):
-            raise ValueError("Telegram response did not contain every backup document")
-        for part, msg in zip(batch, messages):
-            document = msg.get("document") if isinstance(msg, dict) else None
-            if (not isinstance(document, dict)
-                    or not FILE_ID.fullmatch(str(document.get("file_id", "")))
-                    or document.get("file_size") != part.stat().st_size):
-                raise ValueError("Telegram returned a mismatched document")
-            part_record = {
-                "name": part.name,
-                "bytes": part.stat().st_size,
-                "file_id": document["file_id"],
-            }
-            mid = msg.get("message_id")
-            if type(mid) is int and mid > 0:
-                part_record["message_id"] = mid
-            files.append(part_record)
-    manifest = {"name": name, "sha256": checksum, "bytes": total_size,
-                "created": int(time.time()), "files": files,
-                "header_message_id": header_id}
-    if chat_id is not None:
-        manifest["chat_id"] = chat_id
-    if chat_username:
-        manifest["chat_username"] = chat_username
+            try:
+                messages = _bot_call(token, "sendMediaGroup", {
+                    "chat_id": chat, "media": json.dumps(media),
+                    "reply_parameters": json.dumps({"message_id": header_id})
+                }, attachments=[part for _index, part in batch])
+                if not isinstance(messages, list) or len(messages) != len(batch):
+                    raise ValueError("Telegram returned an incomplete album")
+                for (_index, part), msg in zip(batch, messages):
+                    accept(part, msg)
+                checkpoint()
+                continue
+            except ValueError:
+                # Some Telegram endpoints reject large albums even though
+                # individual 18 MB documents work. Fall back to individual
+                # sends; preserve any accepted/verified IDs before retry.
+                checkpoint()
+        for index, part in batch:
+            if part.name in accepted:
+                continue
+            accept(part, send_one(part, index))
+            checkpoint()
+    if len(accepted) != len(parts):
+        raise ValueError("Incomplete Telegram backup: part IDs not all recorded")
+    manifest = {k: v for k, v in pending.items()
+                if k not in ("bot", "chat")}
     if not _valid_manifest(manifest):
         raise ValueError("Incomplete Telegram backup catalog; upload not recorded")
     _atomic_json(catalog_path(name), manifest)
-    # Completion message is helpful but nonessential: the catalog already
-    # records all Telegram-accepted documents.
+    pending_path.unlink(missing_ok=True)
     try:
-        completed = _bot_call(token, "sendMessage", {
+        done = _bot_call(token, "sendMessage", {
             "chat_id": chat, "text": "✅ Backup complete: %s\n%s parts | %.1f MiB\nSHA256: %s" %
             (name, len(parts), total_size / 1048576, checksum),
             "reply_parameters": json.dumps({"message_id": header_id})
         })
-        mid = completed.get("message_id") if isinstance(completed, dict) else None
+        mid = done.get("message_id") if isinstance(done, dict) else None
         if type(mid) is int and mid > 0:
             manifest["complete_message_id"] = mid
             _atomic_json(catalog_path(name), manifest)

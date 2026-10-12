@@ -87,7 +87,7 @@ set_interval() {
   chmod 600 "$SCHEDULE"
   install_timer
   if [[ -s "$CFG" ]]; then
-    systemctl enable --now "$UNIT.timer" "$HEALTH_UNIT.timer" >/dev/null
+    systemctl enable --now "$UNIT.timer" "$UNIT-noon.timer" "$HEALTH_UNIT.timer" >/dev/null
     systemctl restart "$UNIT.timer"
   fi
   log "Backup interval set to $minutes minutes (after previous run finishes; boot trigger also enabled)."
@@ -111,8 +111,17 @@ if response.get('ok') is not True:
 PY
 }
 install_timer() {
-  local minutes
+  local minutes panel_tz=''
   minutes=$(interval_minutes)
+  # The noon timer and the on-disk retention logic use the same configured
+  # panel timezone; archive filenames themselves remain in UTC.
+  if [[ -f /opt/wgdashboard/.env ]]; then
+    panel_tz=$(sed -n 's/^WGD_TZ=//p' /opt/wgdashboard/.env | tail -n 1)
+    [[ "$panel_tz" =~ ^[a-zA-Z0-9_+/-]+$ ]] || panel_tz=''
+    if [[ -n "$panel_tz" ]]; then
+      systemd-analyze calendar "*-*-* 12:00:00 $panel_tz" >/dev/null 2>&1 || panel_tz=''
+    fi
+  fi
   cat > "/etc/systemd/system/$UNIT.service" <<EOF
 [Unit]
 Description=Live WGDashboard SQLite backup and Telegram delivery
@@ -131,6 +140,17 @@ Description=WGDashboard online backup every $minutes minutes
 [Timer]
 OnBootSec=2min
 OnUnitInactiveSec=${minutes}min
+AccuracySec=1min
+Unit=$UNIT.service
+[Install]
+WantedBy=timers.target
+EOF
+  cat > "/etc/systemd/system/$UNIT-noon.timer" <<EOF
+[Unit]
+Description=Extra daily WireDash noon backup (server local time)
+[Timer]
+OnCalendar=*-*-* 12:00:00${panel_tz:+ $panel_tz}
+Persistent=true
 AccuracySec=1min
 Unit=$UNIT.service
 [Install]
@@ -158,7 +178,9 @@ Unit=$HEALTH_UNIT.service
 [Install]
 WantedBy=timers.target
 EOF
-  chmod 644 "/etc/systemd/system/$UNIT.service" "/etc/systemd/system/$UNIT.timer"     "/etc/systemd/system/$HEALTH_UNIT.service" "/etc/systemd/system/$HEALTH_UNIT.timer"
+  chmod 644 "/etc/systemd/system/$UNIT.service" "/etc/systemd/system/$UNIT.timer" \
+    "/etc/systemd/system/$UNIT-noon.timer" \
+    "/etc/systemd/system/$HEALTH_UNIT.service" "/etc/systemd/system/$HEALTH_UNIT.timer"
   systemd-analyze verify "/etc/systemd/system/$UNIT.service" "/etc/systemd/system/$HEALTH_UNIT.service"
   systemctl daemon-reload
   # Legacy script used this name; disable its schedule only, NEVER touch VPN.
@@ -244,7 +266,7 @@ enable_schedule() {
   log 'Scheduled backups enabled.'
 }
 disable_schedule() {
-  systemctl disable --now "$UNIT.timer" "$HEALTH_UNIT.timer" >/dev/null
+  systemctl disable --now "$UNIT.timer" "$UNIT-noon.timer" "$HEALTH_UNIT.timer" >/dev/null
   log 'Scheduled backups disabled; VPN untouched.'
 }
 
@@ -323,6 +345,32 @@ backup() {
   mount_sources
   tmp=$(mktemp -d "$OUT/.working.XXXXXXXX")
   trap 'rm -rf -- "$tmp"' EXIT
+  # Retry ONE previous incomplete Bot API upload before making a new snapshot.
+  # The botfiles checkpoint records accepted file IDs, so already-confirmed
+  # documents are NOT resent. Never touch imported or pre-restore backups.
+  local pending candidate retry_dir pending_size
+  while IFS= read -r candidate; do
+    pending=${candidate##*/}
+    if [[ "$pending" =~ ^wgdashboard-[0-9]{8}-[0-9]{6}\.tar\.gz$ ]] &&
+       [[ ! -e "$candidate.sent" && ! -e "$candidate.imported" ]]; then
+      retry_dir=$tmp/retry
+      mkdir -p "$retry_dir"
+      pending_size=$(stat -c%s "$candidate")
+      if (( pending_size > 18000000 )); then
+        split -b 18000000 -d -a 4 "$candidate" "$retry_dir/$pending.part-"
+      fi
+      if python3 /usr/local/libexec/wgdashbackup_botfiles.py send "$pending" "$retry_dir"; then
+        touch "$candidate.sent"
+        chmod 600 "$candidate.sent"
+        log "Recovered previous Telegram upload and catalog: $pending"
+      else
+        log "WARN: previous Telegram upload remains incomplete; retry on next run: $pending"
+      fi
+      rm -rf -- "$retry_dir"
+      break
+    fi
+  done < <(find "$OUT" -maxdepth 1 -type f -name 'wgdashboard-*.tar.gz' \
+    -printf '%T@ %p\n' | sort -n | cut -d' ' -f2-)
   stage=$tmp/snapshot
   mkdir -p "$stage/data/db" "$stage/etc/wireguard" "$stage/etc/amnezia/amneziawg"
   log 'Starting ONLINE backup (no Docker stop/restart).'
@@ -346,14 +394,8 @@ backup() {
   mv "$archive" "$OUT/$name"
   archive=$OUT/$name
   printf '%s  %s\n' "$sha" "$name" > "$OUT/$name.sha256"
-  # Keep the newest four undelivered local snapshots. Otherwise Telegram outages
-  # could fill the host disk even though sent-backup retention is bounded.
-  mapfile -t old < <(find "$OUT" -maxdepth 1 -type f -name 'wgdashboard-*.tar.gz' \
-    -printf '%T@ %p\\n' | sort -nr | cut -d' ' -f2- | \
-    while IFS= read -r pending; do
-      [[ -f "$pending.sent" || -f "$pending.imported" ]] || printf '%s\\n' "$pending"
-    done | tail -n +5)
-  for part in "${old[@]}"; do rm -f -- "$part" "$part.sha256"; done
+  # Never prune a not-yet-delivered archive before its Telegram delivery
+  # has succeeded; pending archives are intentionally protected.
 
   size=$(stat -c%s "$archive")
   log "Compressed backup size: $size bytes (gzip -9, compatible tar.gz)"
@@ -380,11 +422,11 @@ backup() {
   now_epoch > "$LAST_OK"
   rm -f "$LAST_FAIL" "$RETRY_STATE"
   chmod 600 "$CFG_DIR/last-success" "$LAST_OK"
-  # Retain four fully uploaded archives. Preserve any older backups that failed to upload.
-  mapfile -t old < <(find "$OUT" -maxdepth 1 -type f -name 'wgdashboard-*.tar.gz.sent' -printf '%T@ %p\n' | sort -nr | tail -n +5 | cut -d' ' -f2-)
-  for part in "${old[@]}"; do
-    rm -f -- "$part" "${part%.sent}" "${part%.sent}.sha256"
-  done
+  # Only fully delivered automatic snapshots are candidates for
+  # deletion. Keep one backup made during local 12:00–12:59 each day
+  # (at most 30), preserve imported/pre-restore/pending and Telegram.
+  python3 /usr/local/libexec/wgdashbackup_retention.py "$OUT" ||
+    log 'WARN: local retention failed; snapshots preserved for safety.'
   log "SUCCESS: Telegram received all $total part(s) of $name"
   trap - EXIT; rm -rf -- "$tmp"
 }
@@ -620,7 +662,7 @@ status() {
   now=$(now_epoch); ok=$(file_epoch "$LAST_OK")
   echo "--- Backup interval: $(interval_minutes) minutes after each completed job; also 2min after boot ---"
   echo '--- Backup & health timers ---'
-  systemctl list-timers "$UNIT.timer" "$HEALTH_UNIT.timer" --no-pager || true
+  systemctl list-timers "$UNIT.timer" "$UNIT-noon.timer" "$HEALTH_UNIT.timer" --no-pager || true
   echo '--- Last backup service run ---'
   systemctl show "$UNIT.service" -p Result -p ExecMainStatus --no-pager || true
   echo '--- Container (read-only status) ---'
@@ -690,7 +732,7 @@ main() {
       if [[ "$(readlink -f /usr/local/bin/wireback 2>/dev/null || :)" != "$BIN" ]]; then
         ln -sfn "$BIN" /usr/local/bin/wireback
       fi
-      if [[ ! -f /etc/systemd/system/$UNIT.timer || ! -f /etc/systemd/system/$HEALTH_UNIT.timer ]]; then
+      if [[ ! -f /etc/systemd/system/$UNIT.timer || ! -f /etc/systemd/system/$UNIT-noon.timer || ! -f /etc/systemd/system/$HEALTH_UNIT.timer ]]; then
         install_timer
       else
         echo 'Backup units already installed.'

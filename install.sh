@@ -223,6 +223,7 @@ fetch deploy/wgdashbackup_import.py "$STAGE/wgdashbackup_import.py"
 fetch deploy/wgdashbackup_progress.py "$STAGE/wgdashbackup_progress.py"
 fetch deploy/wgdashbackup_telegram.py "$STAGE/wgdashbackup_telegram.py"
 fetch deploy/wgdashbackup_botfiles.py "$STAGE/wgdashbackup_botfiles.py"
+fetch deploy/wgdashbackup_retention.py "$STAGE/wgdashbackup_retention.py"
 fetch deploy/wgdashbackup-panel.service "$STAGE/wgdashbackup-panel.service"
 fetch deploy/wgd-watchdog.sh "$STAGE/wgd-watchdog.sh"
 fetch deploy/wgd-watchdog.service "$STAGE/wgd-watchdog.service"
@@ -509,6 +510,7 @@ if ((SKIP_BACKUP==0)); then
   install -m 0600 "$STAGE/wgdashbackup_progress.py" /usr/local/libexec/wgdashbackup_progress.py
   install -m 0600 "$STAGE/wgdashbackup_telegram.py" /usr/local/libexec/wgdashbackup_telegram.py
   install -m 0600 "$STAGE/wgdashbackup_botfiles.py" /usr/local/libexec/wgdashbackup_botfiles.py
+  install -m 0600 "$STAGE/wgdashbackup_retention.py" /usr/local/libexec/wgdashbackup_retention.py
   install -m 0644 "$STAGE/wgdashbackup-panel.service" /etc/systemd/system/wgdashbackup-panel.service
   systemctl daemon-reload
   systemctl enable --now wgdashbackup-panel.service

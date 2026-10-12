@@ -36,6 +36,23 @@ class RestoreAndCompaction(unittest.TestCase):
                 final = progress.write_progress("b"*12, "queued", 0, "queued", "next.tar.gz")
                 self.assertEqual(final["jobId"], "b"*12)
 
+    def test_completed_restore_auto_hides_but_running_is_visible(self):
+        with tempfile.TemporaryDirectory() as root:
+            with patch.object(progress,"FILE",Path(root)/"progress.json"):
+                with patch.object(progress.time,"time",return_value=100000):
+                    progress.write_progress("a"*12,"running",75,"applying","test.tar.gz")
+                with patch.object(progress.time,"time",return_value=200000):
+                    self.assertEqual(progress.read_progress()["state"],"running")
+                    progress.write_progress("a"*12,"completed",100,"completed")
+                with patch.object(progress.time,"time",return_value=200010):
+                    self.assertEqual(progress.read_progress()["state"],"completed")
+                with patch.object(progress.time,"time",return_value=200000 + progress.FINISHED_VISIBLE_SECONDS + 1):
+                    self.assertIsNone(progress.read_progress())
+                    self.assertTrue(progress.FILE.is_file(),"Host audit must not be deleted")
+        ui=Path("src/static/app/src/components/settingsComponent/systemBackupSettings.vue").read_text()
+        self.assertIn("dismissRestoreProgress",ui)
+        self.assertIn("visibleRestoreProgress",ui)
+
     def test_backup_only_sqlite_reclaims_free_pages_without_changing_live_db(self):
         with tempfile.TemporaryDirectory() as root:
             base = Path(root)

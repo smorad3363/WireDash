@@ -41,7 +41,11 @@ class NormalizeDefault(ast.NodeTransformer):
             node.args.pop()
         return node
 for name,node in a.items():
-    lhs=ast.dump(node,include_attributes=False)
+    # The prior release already includes the optional server-wide default
+    # argument; normalize BOTH baseline and changed route for later PRs.
+    # Otherwise an unchanged API_addPeers fails after the first merge.
+    lhs=ast.dump(NormalizeDefault().visit(node) if name=="API_addPeers" else node,
+                 include_attributes=False)
     rhs=ast.dump(NormalizeDefault().visit(b[name]) if name=="API_addPeers" else b[name],
                  include_attributes=False)
     assert lhs==rhs, "Existing API route modified: "+name
