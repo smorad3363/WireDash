@@ -18,6 +18,7 @@ const progress = ref("");
 const query = ref("");
 const statusFilter = ref("all");
 const sort = ref("name");
+const sortDirection = ref("asc");
 const page = ref(1);
 const perPage = 50;
 const selected = ref([]);
@@ -32,7 +33,7 @@ const temporaryAccessConsent = ref(false);
 const now = ref(Date.now());
 const filtered = computed(() => filterAndSortPeers(records.value,
   {query: query.value, status: statusFilter.value, sort: sort.value,
-    serverTimeZone: serverTimeZone.value}, now.value));
+    direction: sortDirection.value, serverTimeZone: serverTimeZone.value}, now.value));
 const pageCount = computed(() => Math.max(1, Math.ceil(filtered.value.length / perPage)));
 const visible = computed(() => filtered.value.slice((page.value - 1) * perPage, page.value * perPage));
 const chosenPeers = computed(() => {
@@ -81,7 +82,17 @@ const refresh = async () => {
 };
 onMounted(refresh);
 
-watch([query, statusFilter, sort, serverTimeZone], () => {page.value = 1;});
+watch([query, statusFilter, sort, sortDirection, serverTimeZone], () => {page.value = 1;});
+// Table headers are the only sort controls. Re-click to reverse; one active sort.
+const toggleSort = key => {
+  if (busy.value || action.value) return;
+  if (sort.value === key) sortDirection.value = sortDirection.value === "asc" ? "desc" : "asc";
+  else {sort.value = key; sortDirection.value = "asc";}
+};
+const ariaSort = key => sort.value === key ?
+  (sortDirection.value === "asc" ? "ascending" : "descending") : "none";
+const sortSymbol = key => sort.value !== key ? "↕" :
+  sortDirection.value === "asc" ? "▲" : "▼";
 watch(pageCount, total => { if (page.value > total) page.value = total; });
 
 const toggle = (id, enabled) => {
@@ -330,25 +341,14 @@ const executeAction = async () => {
               <span class="small text-muted">Status</span>
               <select class="form-select form-select-sm" v-model="statusFilter" :disabled="busy || !!action">
                 <option value="all">All peers</option>
-                <option value="expired">Time OR traffic expired</option>
-                <option value="time_expired">Time expired</option>
-                <option value="traffic_expired">Traffic exhausted</option>
-                <option value="expiring_soon">Expiring soon (3 days / 1 GB)</option>
-                <option value="unlimited">No active time/traffic limit</option>
-                <option value="unlimited_time">No active time limit</option>
-                <option value="unlimited_traffic">No active traffic limit</option>
-                <option value="restricted">Access restricted</option>
-                <option value="active">Not restricted or expired</option>
-                <option value="unknown">Unknown/legacy or restricted-expired history</option>
-              </select>
-            </label>
-            <label class="flex-grow-1" style="min-width: 155px">
-              <span class="small text-muted">Sort</span>
-              <select class="form-select form-select-sm" v-model="sort" :disabled="busy || !!action">
-                <option value="name">Name</option>
-                <option value="time_remaining">Time remaining (ascending)</option>
-                <option value="traffic_remaining">Traffic remaining (ascending)</option>
-                <option value="usage">Highest metered usage</option>
+                <option value="expired">Expired</option>
+                <option value="expiring_soon">Expiring soon</option>
+                <option value="unlimited">Unlimited</option>
+                <option value="unlimited_time">No time limit</option>
+                <option value="unlimited_traffic">No data limit</option>
+                <option value="restricted">Restricted</option>
+                <option value="active">Active</option>
+                <option value="unknown">Needs review</option>
               </select>
             </label>
             <button type="button" class="btn btn-sm btn-outline-secondary align-self-end"
@@ -377,38 +377,91 @@ const executeAction = async () => {
             <span class="ms-auto text-muted" v-else>Showing {{visible.length}} / {{filtered.length}} matches</span>
           </div>
 
-          <div class="table-responsive border rounded-3" style="max-height: 37vh; overflow-y: auto;">
-            <table class="table table-sm table-hover align-middle mb-0" aria-label="Bulk peer selection">
+          <div class="table-responsive border rounded-3 bulk-table-scroll" style="max-height: 37vh; overflow-y: auto;">
+            <table class="table table-sm table-hover align-middle mb-0 bulk-table" aria-label="Bulk peer selection">
               <thead class="sticky-top">
                 <tr>
-                  <th style="width: 40px"></th><th>Peer</th><th>Access</th><th>Time</th><th>Traffic</th>
+                  <th scope="col" class="bulk-check-col"></th>
+                  <th scope="col" :aria-sort="ariaSort('name')">
+                    <button type="button" class="bulk-sort" :disabled="busy || !!action"
+                      @click="toggleSort('name')">User
+                      <span class="bulk-sort-icon" aria-hidden="true">{{sortSymbol('name')}}</span>
+                    </button>
+                  </th>
+                  <th scope="col" :aria-sort="ariaSort('status')">
+                    <button type="button" class="bulk-sort" :disabled="busy || !!action"
+                      @click="toggleSort('status')">Status
+                      <span class="bulk-sort-icon" aria-hidden="true">{{sortSymbol('status')}}</span>
+                    </button>
+                  </th>
+                  <th scope="col" :aria-sort="ariaSort('time_remaining')">
+                    <button type="button" class="bulk-sort" :disabled="busy || !!action"
+                      @click="toggleSort('time_remaining')">Time
+                      <span class="bulk-sort-icon" aria-hidden="true">{{sortSymbol('time_remaining')}}</span>
+                    </button>
+                  </th>
+                  <th scope="col" :aria-sort="ariaSort('traffic_remaining')">
+                    <button type="button" class="bulk-sort" :disabled="busy || !!action"
+                      @click="toggleSort('traffic_remaining')">Data (GB)
+                      <span class="bulk-sort-icon" aria-hidden="true">{{sortSymbol('traffic_remaining')}}</span>
+                    </button>
+                  </th>
+                  <th scope="col" :aria-sort="ariaSort('access')">
+                    <button type="button" class="bulk-sort" :disabled="busy || !!action"
+                      @click="toggleSort('access')">Access
+                      <span class="bulk-sort-icon" aria-hidden="true">{{sortSymbol('access')}}</span>
+                    </button>
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-for="item in visible" :key="item.peer.id">
-                  <td><input type="checkbox" :checked="selected.includes(item.peer.id)"
-                    :disabled="busy || !!action"
-                    :aria-label="'Select '+(item.peer.name || item.peer.id)"
-                    @change="toggle(item.peer.id, $event.target.checked)"></td>
                   <td>
-                    <div class="fw-semibold">{{item.peer.name || 'Untitled Peer'}}</div>
-                    <small class="text-muted font-monospace">{{item.peer.id.slice(0, 20)}}…</small>
+                    <input type="checkbox" :checked="selected.includes(item.peer.id)"
+                      :disabled="busy || !!action"
+                      :aria-label="'Select '+(item.peer.name || item.peer.id)"
+                      @change="toggle(item.peer.id, $event.target.checked)">
                   </td>
-                  <td><small>{{item.peer.restricted ? 'Restricted' : 'Allowed'}}</small></td>
                   <td>
-                    <small v-if="item.policy.timeRemainingDays !== null">
-                      {{item.policy.time === 'expired' ? 'Expired' : item.policy.timeRemainingDays.toFixed(1) + ' days left'}}
+                    <div class="fw-semibold bulk-user-name">{{item.peer.name || 'Untitled Peer'}}</div>
+                    <small class="text-muted d-block bulk-user-detail"
+                      :title="'Peer: '+item.peer.id+' · Last handshake: '+(item.peer.latest_handshake || 'N/A')">
+                      {{item.peer.allowed_ip || item.peer.id.slice(0, 18) + '…'}}
                     </small>
-                    <small v-else>{{item.policy.time}}</small>
                   </td>
                   <td>
-                    <small v-if="item.policy.trafficRemainingGb !== null">
-                      {{item.policy.traffic === 'expired' ? 'Exhausted' : item.policy.trafficRemainingGb.toFixed(2) + ' GB left'}}
-                    </small>
-                    <small v-else>{{item.policy.traffic}}</small>
+                    <span class="bulk-status" :class="'bulk-status--'+item.summary.key"
+                      :title="item.summary.key === 'review' ? 'The old API cannot reveal the reason for a completed restriction; review manually.' : item.summary.label">
+                      {{item.summary.label}}
+                    </span>
                   </td>
+                  <td>
+                    <small class="bulk-time" :title="item.policy.deadline !== null
+                      ? 'Expiry (server time): '+new Date(item.policy.deadline).toISOString().slice(0,19).replace('T',' ')+' · '+serverTimeZone
+                      : 'No reliable active time limit date'">
+                      {{item.timeLabel}}
+                    </small>
+                  </td>
+                  <td>
+                    <div class="bulk-data-bar" :class="'bulk-data-bar--'+item.dataBar.state"
+                      :role="item.dataBar.hasQuota ? 'progressbar' : 'img'"
+                      :aria-valuemin="item.dataBar.hasQuota ? 0 : undefined"
+                      :aria-valuemax="item.dataBar.hasQuota ? item.dataBar.quota : undefined"
+                      :aria-valuenow="item.dataBar.hasQuota ? Math.min(item.dataBar.used, item.dataBar.quota) : undefined"
+                      :aria-label="item.dataBar.details" :title="item.dataBar.details">
+                      <div class="bulk-data-bar__segments" aria-hidden="true">
+                        <span class="bulk-data-bar__download" :style="{width:item.dataBar.downloadPct+'%'}"></span>
+                        <span class="bulk-data-bar__upload" :style="{width:item.dataBar.uploadPct+'%'}"></span>
+                        <span class="bulk-data-bar__other" :style="{width:item.dataBar.otherPct+'%'}"></span>
+                      </div>
+                      <span class="bulk-data-bar__label" aria-hidden="true">{{item.dataBar.label}}</span>
+                    </div>
+                  </td>
+                  <td><small :class="item.peer.restricted ? 'text-danger-emphasis' : 'text-success-emphasis'">
+                    {{item.peer.restricted ? 'Restricted' : 'Allowed'}}
+                  </small></td>
                 </tr>
-                <tr v-if="!visible.length"><td colspan="5" class="text-center text-muted py-3">No peers match the selected filter.</td></tr>
+                <tr v-if="!visible.length"><td colspan="6" class="text-center text-muted py-3">No matching peers.</td></tr>
               </tbody>
             </table>
           </div>
@@ -518,3 +571,106 @@ const executeAction = async () => {
     </div>
   </div>
 </template>
+
+<style scoped>
+/* Table stays usable at desktop widths; narrow screens scroll horizontally. */
+.bulk-table { min-width: 790px; }
+.bulk-table thead th {
+  background: var(--bs-body-bg);
+  color: var(--bs-body-color);
+  z-index: 1;
+  vertical-align: middle;
+}
+.bulk-check-col { width: 38px; }
+.bulk-sort {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .5rem;
+  padding: .3rem .15rem;
+  border: 0;
+  border-radius: .25rem;
+  background: transparent;
+  color: inherit;
+  width: 100%;
+  text-align: start;
+  font: inherit;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.bulk-sort:hover:not(:disabled) { color: var(--bs-primary); }
+.bulk-sort:focus-visible { outline: 2px solid var(--bs-primary); outline-offset: 2px; }
+.bulk-sort:disabled { cursor: default; opacity: .65; }
+.bulk-sort-icon { font-size: .7rem; opacity: .72; min-width: 1em; }
+.bulk-user-name { max-width: 180px; overflow-wrap: anywhere; }
+.bulk-user-detail { font-size: .74rem; max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
+.bulk-time { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bulk-status {
+  display: inline-block;
+  padding: .23rem .48rem;
+  border-radius: .4rem;
+  font-size: .73rem;
+  font-weight: 700;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+.bulk-status--time { color: #78350f; background: #fef3c7; border-color: #f59e0b; }
+.bulk-status--data { color: #1e40af; background: #dbeafe; border-color: #93c5fd; }
+.bulk-status--both { color: #9f1239; background: #ffe4e6; border-color: #fda4af; }
+.bulk-status--review { color: #334155; background: #e2e8f0; border-color: #94a3b8; }
+.bulk-status--restricted { color: #7c2d12; background: #ffedd5; border-color: #fdba74; }
+.bulk-status--soon { color: #713f12; background: #fef9c3; border-color: #eab308; }
+.bulk-status--active { color: #166534; background: #dcfce7; border-color: #86efac; }
+
+/* ONE stacked download/upload progress graphic with the only visible
+   number inside it. A separate opaque label keeps text readable over either
+   bar colour, including when usage reaches 100%. Theme vars adapt dark mode. */
+.bulk-data-bar {
+  width: 154px;
+  min-width: 130px;
+  height: 27px;
+  border: 1px solid var(--bs-border-color, #94a3b8);
+  border-radius: .45rem;
+  position: relative;
+  overflow: hidden;
+  background: var(--bs-tertiary-bg, #e2e8f0);
+  margin-block: .2rem;
+}
+.bulk-data-bar__segments {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  overflow: hidden;
+}
+.bulk-data-bar__segments span { display: block; height: 100%; flex: 0 0 auto; }
+.bulk-data-bar__download { background: #2563eb; }
+.bulk-data-bar__upload { background: #0d9488; }
+.bulk-data-bar__other { background: #6366f1; }
+.bulk-data-bar__label {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  padding: .05rem .42rem;
+  min-width: 63px;
+  text-align: center;
+  border-radius: .33rem;
+  border: 1px solid var(--bs-border-color, #94a3b8);
+  background: var(--bs-body-bg, #fff);
+  color: var(--bs-body-color, #0f172a);
+  box-shadow: 0 0 0 1px rgba(0,0,0,.08);
+  font-size: .73rem;
+  font-family: var(--bs-font-monospace, monospace);
+  font-weight: 750;
+  line-height: 1.35;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.bulk-data-bar--warning { border-color: #d97706; border-width: 2px; }
+.bulk-data-bar--exhausted { border-color: #be123c; border-width: 2px; }
+.bulk-data-bar--unknown { border-style: dashed; }
+:global([data-bs-theme="dark"]) .bulk-data-bar__download { background: #60a5fa; }
+:global([data-bs-theme="dark"]) .bulk-data-bar__upload { background: #2dd4bf; }
+:global([data-bs-theme="dark"]) .bulk-data-bar__other { background: #a5b4fc; }
+</style>

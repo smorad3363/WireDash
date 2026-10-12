@@ -4,6 +4,7 @@ import {readFileSync} from "node:fs";
 import {DEFAULT_SERVER_TIME_ZONE, filterAndSortPeers, peerPolicy, plannedJob, validTimeZone}
   from "../src/static/app/src/utilities/peerBulkPolicy.mjs";
 import {renewRestrictedWithRestore} from "../src/static/app/src/utilities/peerBulkRenewal.mjs";
+import {peerDataBar, peerStatus, peerTimeLabel} from "../src/static/app/src/utilities/peerBulkDisplay.mjs";
 
 // Browser running in UTC or Europe/Berlin must schedule the server's local wall
 // time (default Europe/Istanbul) identically.
@@ -106,6 +107,70 @@ assert.throws(()=>plannedJob(sample[2],"wg0","time",0,now,()=>""),/positive/);
 assert.throws(()=>plannedJob(sample[2],"wg0","time",5,now,()=>"a",
   {serverTimeZone:"Invalid/TimeZone"}),/Invalid server timezone/);
 
+// Compact table UI: a SINGLE combined bar with the ratio inside it.
+// The blue and teal portions MUST correspond to already-weighted counters,
+// and no quota may be invented for expired/legacy restricted peers.
+const used15=peer("mixed-traffic",[trafficJob(20)],{raw:15});
+used15.metered_receive=3; // Upload
+used15.metered_sent=12;   // Download
+const model=peerDataBar(used15,peerPolicy(used15,now.getTime()));
+assert.equal(model.label,"15|20");
+assert.equal(model.hasQuota,true);
+assert.equal(model.used,15);
+assert.equal(model.quota,20);
+assert.equal(model.percent,75);
+assert.equal(model.downloadPct,60);
+assert.equal(model.uploadPct,15);
+assert.equal(model.otherPct,0);
+assert.match(model.details,/Download: 12 GB/);
+assert.match(model.details,/Upload: 3 GB/);
+assert.match(model.details,/Remaining: 5 GB/);
+const saturated=peer("overlimit",[trafficJob(10)],{raw:13});
+saturated.metered_receive=3;saturated.metered_sent=10;
+const full=peerDataBar(saturated,peerPolicy(saturated,now.getTime()));
+assert.equal(full.label,"13|10");
+assert.equal(full.percent,100);
+assert.equal(full.downloadPct+full.uploadPct,100);
+assert.equal(full.state,"exhausted");
+const unrestricted=peer("unlimited",[],{raw:4});
+unrestricted.metered_receive=1;unrestricted.metered_sent=3;
+const infinity=peerDataBar(unrestricted,peerPolicy(unrestricted,now.getTime()));
+assert.equal(infinity.label,"4|∞");
+assert.equal(infinity.percent,0);
+assert.equal(infinity.hasQuota,false);
+const historic=peer("historic",[],{raw:4,restricted:true});
+const unknown=peerDataBar(historic,peerPolicy(historic,now.getTime()));
+assert.equal(unknown.label,"4|?");
+assert.equal(unknown.state,"unknown");
+assert.equal(unknown.downloadPct,0);
+assert.equal(unknown.hasQuota,false);
+const both=peer("both-expired",[dateJob(-1),trafficJob(5)],{raw:6});
+assert.deepEqual(peerStatus(peerPolicy(both,now.getTime())),
+  {key:"both",label:"Expired · Both",rank:0});
+assert.equal(peerStatus(peerPolicy(sample[0],now.getTime())).label,"Expired · Time");
+assert.equal(peerStatus(peerPolicy(sample[1],now.getTime())).label,"Expired · Data");
+assert.equal(peerStatus(peerPolicy(sample[9],now.getTime())).label,"Needs review");
+assert.equal(peerTimeLabel(peerPolicy(sample[3],now.getTime())),"1d left");
+
+// Clicking an existing header twice reverses sorting and preserves active
+// selection (the table's stable key is the peer ID, not the row position).
+const sortingPeers=[sample[0],sample[1],sample[3],sample[4],sample[8],sample[9],sample[2]];
+const sorted=(sort,direction) => filterAndSortPeers(sortingPeers,
+  {sort,direction},now.getTime()).map(x=>x.peer.id);
+assert.deepEqual(sorted("name","asc"), [...sorted("name","desc")].reverse());
+assert.equal(sorted("time_remaining","asc")[0],"time-exhausted");
+assert.equal(sorted("time_remaining","desc")[0],"both-limited");
+assert.deepEqual(sorted("time_remaining","desc").slice(-4).sort(),
+  ["closed-time","open-unlimited","quota-soon","traffic-exhausted"].sort());
+assert.deepEqual(sorted("traffic_remaining","asc").slice(0,3),
+  ["traffic-exhausted","quota-soon","both-limited"]);
+assert.deepEqual(sorted("traffic_remaining","desc").slice(0,3),
+  ["both-limited","quota-soon","traffic-exhausted"]);
+assert.equal(sorted("status","asc")[0],"time-exhausted");
+assert.equal(sorted("status","desc")[0],"open-unlimited");
+assert.equal(sorted("access","desc")[0],"traffic-exhausted");
+assert.equal(sorted("access","asc")[0],"both-limited");
+
 // Simulate old endpoints, including partial HTTP failures and a failed
 // access-restoration attempt. No live users, keys or network calls involved.
 const simulate = async ({consent=true, allow=true, save=true, restrict=true, firstReadFails=false}={}) => {
@@ -183,6 +248,25 @@ assert.match(flow,/CRITICAL: original restriction could not be verified/);
 assert.match(ui,/renewalPreview/);
 assert.match(ui,/serverTimeZone/);
 assert.match(ui,/maxOperation = 200/);
+assert.match(ui,/toggleSort\('name'\)/);
+assert.match(ui,/toggleSort\('status'\)/);
+assert.match(ui,/toggleSort\('time_remaining'\)/);
+assert.match(ui,/toggleSort\('traffic_remaining'\)/);
+assert.match(ui,/toggleSort\('access'\)/);
+assert.match(ui,/:aria-sort="ariaSort\('name'\)"/);
+assert.match(ui,/bulk-data-bar__label/);
+assert.match(ui,/bulk-data-bar__download/);
+assert.match(ui,/bulk-data-bar__upload/);
+assert.match(ui,/bulk-status--/);
+assert.match(ui,/<option value="expired">Expired<\/option>/);
+assert.match(ui,/<option value="unknown">Needs review<\/option>/);
+assert.doesNotMatch(ui,/<option value="time_expired">/);
+assert.doesNotMatch(ui,/<option value="traffic_expired">/);
+assert.doesNotMatch(ui,/<span class="small text-muted">Sort<\/span>/);
+assert.match(ui,/background: var\(--bs-body-bg/);
+assert.match(ui,/color: var\(--bs-body-color/);
+assert.match(ui,/focus-visible/);
+assert.match(readFileSync("src/static/app/src/utilities/peerBulkDisplay.mjs","utf8"),/Download:.*blue/);
 for(const text of ["api/ui/getWireguardConfigurationPage","peerPageSize = 50"])
   assert.ok(list.includes(text));
 console.log("PASS: safe historical expiry labels, renewal quotas, timezone, restrict compensation and unchanged APIs");

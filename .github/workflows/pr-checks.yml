@@ -81,6 +81,8 @@ jobs:
             grep -Rq "Full restore progress" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
             grep -Rq "Recover using a Telegram message link" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
             grep -Rq "Could not load the peer configuration for QR" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
+            grep -Rq "bulk-data-bar__label" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
+            grep -Rq "Expired · Both" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
             grep -Rq "Upload, verify" /opt/wgdashboard/src/static/dist/WGDashboardAdmin/assets
           '
       - name: Synthetic 5000 peers under 50 concurrent API clients
