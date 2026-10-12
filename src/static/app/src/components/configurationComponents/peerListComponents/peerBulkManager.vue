@@ -158,7 +158,8 @@ const renewalPreview = computed(() => {
         : plannedJob(peer, props.configuration.Name, action.value,
             amount.value, new Date(now.value), () => "preview", {
               serverTimeZone:serverTimeZone.value,
-              assumeWeightOne:assumeWeightOne.value
+              assumeWeightOne:assumeWeightOne.value,
+              replacementFactor:Number(dashboardStore.Configuration?.Peers?.peer_traffic_factor ?? 1)
             });
       const result = action.value === "time"
         ? `New expiry: ${job.Value} (${serverTimeZone.value})`
@@ -283,7 +284,8 @@ const executeAction = async () => {
             : plannedJob(peer, props.configuration.Name, action.value, value,
                 new Date(), uuid, {
                   serverTimeZone:serverTimeZone.value,
-                  assumeWeightOne:assumeWeightOne.value
+                  assumeWeightOne:assumeWeightOne.value,
+              replacementFactor:Number(dashboardStore.Configuration?.Peers?.peer_traffic_factor ?? 1)
                 });
           if (peer.restricted) {
             const outcome = await renewRestrictedWithRestore({
@@ -543,8 +545,10 @@ const executeAction = async () => {
               </label>
               <label v-if="action === 'traffic'" class="small d-flex align-items-start gap-2">
                 <input type="checkbox" v-model="assumeWeightOne" :disabled="busy">
-                If a peer has zero usage and no active quota, use factor 1. The historical
-                weight cannot be recovered from the existing API in that case.
+                If a peer has NO active quota, explicitly use the current SERVER
+                default factor ({{dashboardStore.Configuration?.Peers?.peer_traffic_factor || 1}}×).
+                Historic factor cannot be inferred reliably after factor changes.
+                Review each peer before saving.
               </label>
               <div class="small border rounded p-2" style="max-height:180px;overflow-y:auto">
                 <strong>Before / after preview ({{renewalPreview.length}} peers)</strong>
