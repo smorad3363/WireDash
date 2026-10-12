@@ -186,7 +186,7 @@ const sortingByUsage=[
 ];
 const usedOrder = direction => filterAndSortPeers(sortingByUsage,
   {sort:"usage",direction},now.getTime()).map(x=>x.peer.id);
-assert.deepEqual(usedOrder("desc"),["u-eight","u-one","u-nodata","u-zero"]);
+assert.deepEqual(usedOrder("desc"),["u-eight","u-one","u-zero","u-nodata"]);
 assert.deepEqual(usedOrder("asc"),["u-nodata","u-zero","u-one","u-eight"]);
 
 // The new default preference is browser-only; actual usage rules are NOT
