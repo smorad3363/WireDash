@@ -345,6 +345,32 @@ backup() {
   mount_sources
   tmp=$(mktemp -d "$OUT/.working.XXXXXXXX")
   trap 'rm -rf -- "$tmp"' EXIT
+  # Retry ONE previous incomplete Bot API upload before making a new snapshot.
+  # The botfiles checkpoint records accepted file IDs, so already-confirmed
+  # documents are NOT resent. Never touch imported or pre-restore backups.
+  local pending candidate retry_dir pending_size
+  while IFS= read -r candidate; do
+    pending=${candidate##*/}
+    if [[ "$pending" =~ ^wgdashboard-[0-9]{8}-[0-9]{6}\.tar\.gz$ ]] &&
+       [[ ! -e "$candidate.sent" && ! -e "$candidate.imported" ]]; then
+      retry_dir=$tmp/retry
+      mkdir -p "$retry_dir"
+      pending_size=$(stat -c%s "$candidate")
+      if (( pending_size > 18000000 )); then
+        split -b 18000000 -d -a 4 "$candidate" "$retry_dir/$pending.part-"
+      fi
+      if python3 /usr/local/libexec/wgdashbackup_botfiles.py send "$pending" "$retry_dir"; then
+        touch "$candidate.sent"
+        chmod 600 "$candidate.sent"
+        log "Recovered previous Telegram upload and catalog: $pending"
+      else
+        log "WARN: previous Telegram upload remains incomplete; retry on next run: $pending"
+      fi
+      rm -rf -- "$retry_dir"
+      break
+    fi
+  done < <(find "$OUT" -maxdepth 1 -type f -name 'wgdashboard-*.tar.gz' \
+    -printf '%T@ %p\n' | sort -n | cut -d' ' -f2-)
   stage=$tmp/snapshot
   mkdir -p "$stage/data/db" "$stage/etc/wireguard" "$stage/etc/amnezia/amneziawg"
   log 'Starting ONLINE backup (no Docker stop/restart).'
