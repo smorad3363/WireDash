@@ -91,8 +91,72 @@ def _valid_manifest(record):
                 type(item.get("bytes")) is not int or
                 not 0 < item["bytes"] <= PART_BYTES):
             return False
+        mid = item.get("message_id")
+        if mid is not None and (type(mid) is not int or mid <= 0):
+            return False
         total += item["bytes"]
+    for field in ("header_message_id", "complete_message_id"):
+        mid = record.get(field)
+        if mid is not None and (type(mid) is not int or mid <= 0):
+            return False
+    chat_id = record.get("chat_id")
+    if chat_id is not None and (type(chat_id) is not int or chat_id == 0):
+        return False
+    username = record.get("chat_username")
+    if username is not None and (not isinstance(username, str) or
+                                not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{4,31}", username)):
+        return False
     return total == record.get("bytes") and total <= importer.LIMIT_BYTES
+
+
+def backup_link(record):
+    """Return a link to a recorded header or part, when Telegram provides one."""
+    mid = record.get("header_message_id") or next(
+        (f.get("message_id") for f in record["files"] if f.get("message_id")), None)
+    if type(mid) is not int or mid <= 0:
+        return ""
+    username = record.get("chat_username")
+    if username:
+        return f"https://t.me/{username}/{mid}"
+    chat_id = record.get("chat_id")
+    if type(chat_id) is int and str(chat_id).startswith("-100"):
+        suffix = str(chat_id)[4:]
+        if suffix.isdigit() and int(suffix) > 0:
+            return f"https://t.me/c/{suffix}/{mid}"
+    return ""
+
+
+def resolve_link(link):
+    """Match a Telegram link ONLY to this host's saved bot-sent messages.
+
+    The Bot API has no arbitrary history lookup. A link is usable without a
+    user login only if the original message ID and chat identity were saved.
+    """
+    kind, target, message_id = telegram.parse_link(link)
+    if not CATALOG.is_dir():
+        return None
+    for path in CATALOG.glob("wgdashboard-*.tar.gz.json"):
+        if path.is_symlink():
+            continue
+        try:
+            data = load(path.name[:-5])
+        except (OSError, ValueError, TypeError):
+            continue
+        ids = [data.get("header_message_id"), data.get("complete_message_id")]
+        ids.extend(item.get("message_id") for item in data["files"])
+        if message_id not in ids:
+            continue
+        chat_id = data.get("chat_id")
+        username = data.get("chat_username")
+        if (kind == "username" and isinstance(username, str) and
+                username.casefold() == target.casefold()):
+            return data["name"]
+        if kind == "channel" and type(chat_id) is int:
+            if str(chat_id) == "-100" + str(target):
+                return data["name"]
+        if kind == "user" and type(chat_id) is int and chat_id == target:
+            return data["name"]
+    return None
 
 
 def available():
@@ -109,7 +173,8 @@ def available():
                 continue
             listed.append({
                 "name": data["name"], "bytes": data["bytes"],
-                "parts": len(data["files"]), "created": int(data.get("created", 0))
+                "parts": len(data["files"]), "created": int(data.get("created", 0)),
+                "link": backup_link(data),
             })
         except (ValueError, OSError, TypeError):
             continue
@@ -197,6 +262,13 @@ def send_archive(name, folder):
     header_id = intro.get("message_id") if isinstance(intro, dict) else None
     if not isinstance(header_id, int):
         raise ValueError("Telegram did not return header message ID")
+    intro_chat = intro.get("chat") if isinstance(intro.get("chat"), dict) else {}
+    chat_id = intro_chat.get("id")
+    if type(chat_id) is not int:
+        chat_id = int(chat) if chat.lstrip("-").isdigit() else None
+    chat_username = intro_chat.get("username", "")
+    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{4,31}", str(chat_username)):
+        chat_username = chat[1:] if chat.startswith("@") else None
     files = []
     for start in range(0, len(parts), 10):
         batch = parts[start:start + 10]
@@ -231,24 +303,37 @@ def send_archive(name, folder):
                     or not FILE_ID.fullmatch(str(document.get("file_id", "")))
                     or document.get("file_size") != part.stat().st_size):
                 raise ValueError("Telegram returned a mismatched document")
-            files.append({
+            part_record = {
                 "name": part.name,
                 "bytes": part.stat().st_size,
                 "file_id": document["file_id"],
-            })
+            }
+            mid = msg.get("message_id")
+            if type(mid) is int and mid > 0:
+                part_record["message_id"] = mid
+            files.append(part_record)
     manifest = {"name": name, "sha256": checksum, "bytes": total_size,
-                "created": int(time.time()), "files": files}
+                "created": int(time.time()), "files": files,
+                "header_message_id": header_id}
+    if chat_id is not None:
+        manifest["chat_id"] = chat_id
+    if chat_username:
+        manifest["chat_username"] = chat_username
     if not _valid_manifest(manifest):
         raise ValueError("Incomplete Telegram backup catalog; upload not recorded")
     _atomic_json(catalog_path(name), manifest)
     # Completion message is helpful but nonessential: the catalog already
     # records all Telegram-accepted documents.
     try:
-        _bot_call(token, "sendMessage", {
-            "chat_id": chat, "text": "✅ Backup complete: %s\n%s parts | %.1f MiB" %
-            (name, len(parts), total_size / 1048576),
+        completed = _bot_call(token, "sendMessage", {
+            "chat_id": chat, "text": "✅ Backup complete: %s\n%s parts | %.1f MiB\nSHA256: %s" %
+            (name, len(parts), total_size / 1048576, checksum),
             "reply_parameters": json.dumps({"message_id": header_id})
         })
+        mid = completed.get("message_id") if isinstance(completed, dict) else None
+        if type(mid) is int and mid > 0:
+            manifest["complete_message_id"] = mid
+            _atomic_json(catalog_path(name), manifest)
     except ValueError:
         pass
     return manifest
