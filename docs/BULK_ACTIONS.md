@@ -17,18 +17,48 @@ Completion history that is invisible in the legacy API remains in Needs
 review; it is NEVER guessed to be a specific expiry cause.
 
 Sorting is done by clicking a **table header** (User, Status, Time,
-Data, Access). Clicking the same header reverses ascending/descending order.
-Unknown/unlimited values sort AFTER numeric remaining times/volumes in both
-directions. The separate Sort menu was removed.
+Data used, Access). The **Data used** header sorts ACTUAL metered usage across
+all users (including unlimited users). Its first click sorts highest usage
+first, and subsequent clicks reverse direction. This is different from
+remaining quota (which is missing for unlimited users); unknown/missing
+metering remains last. Time still sorts remaining time, keeping unknown
+values last. The separate Sort menu was removed.
 
 The **Data (GB)** column contains ONE compact stacked progress bar with the
 `used|quota` number centered on an opaque, high-contrast backing. Download
 (blue) and upload (teal) consume proportional segments of this SAME bar
 using the existing metered (weighted) GB fields. Hover or accessibility label
 reveals upload/download and remaining usage; no additional text row is needed.
-Unlimited users show `used|∞` and historical unknown limits show `used|?`,
-WITHOUT inventing a fill percentage. Time column shows short remaining
-days/hours; tooltip contains the exact known expiry when available.
+Unlimited users show `used|∞` and historical unknown limits show `used|?`.
+For these peers WITH recorded traffic, the SAME bar fills with the
+blue/teal **download/upload mix of USED traffic**, rather than leaving a
+blank bar or implying a fabricated quota percentage. The tooltip says
+explicitly that it is a composition chart, NOT quota progress. A genuine
+0-GB used peer correctly has an empty bar. Time shows short remaining
+days/hours; tooltip includes the exact known expiry when available.
+
+## Default traffic factor and existing peers
+
+Under **Settings → Peers Settings**, an admin can save a preferred default
+factor (0.1–10). Because the LEGACY API has no server-shared factor-setting
+field, this default uses **local browser storage**. It is NOT synchronized
+across administrators/browsers. Saving it does not alter old peer jobs or
+the server's stored metering factors. Both peer creation flows (single and
+bulk) automatically use this default for NEW users that have a data quota.
+The legacy creation contract still requires `traffic_factor=1` for
+quota=0/unlimited peers.
+
+To change already-existing peers, select users with **Has data quota**
+in Bulk Manager and choose **Set factor**. An individual preview shows
+the unchanged GB quota, previous/new factor and projected billed usage.
+A separate checkbox explicitly acknowledges that the new factor could
+immediately exhaust an existing quota. This calls the existing
+`savePeerScheduleJob` endpoint with the same JobID and quota, editing only
+the stored `weight`. Missing, expired or legacy/ambiguous active quotas
+cannot be changed via that API and are skipped/blocked by preview. Restricted
+peers still need the explicit temporary allow-and-restrict consent and
+verification already documented below. No automatic action is run just
+because an admin saved a default.
 
 Multiple-page selection is maintained in the modal, with distinct
 "select page" and "select all matching" controls. Maximum **200 peers
