@@ -77,6 +77,45 @@ class BotCatalogTests(unittest.TestCase):
         self.assertIsNone(bot.resolve_link("https://t.me/BackupChannel/400"))
         self.assertEqual((bot.CATALOG/(NAME+".json")).stat().st_mode&0o777,0o600)
 
+    def test_interrupted_album_resumes_from_accepted_file_ids(self):
+        stage=self.root/"stage"
+        for i in range(3):
+            (stage/(NAME+".part-"+str(i).zfill(4))).write_bytes(bytes([65+i])*9)
+        calls=[]
+        failed=[False]
+        def fake_api(token,method,fields,attachments=()):
+            calls.append((method,fields))
+            if method=="sendMessage":
+                return {"message_id":321,"chat":{"id":-100777123}}
+            if method=="sendMediaGroup":
+                # Telegram can reject an album even if documents work alone.
+                raise ValueError("simulated unsupported media group")
+            if method=="sendDocument":
+                part=fields["document"].split(";filename=")[1]
+                if part.endswith("0001") and not failed[0]:
+                    failed[0]=True
+                    raise ValueError("simulated disconnect after first accepted file")
+                return {"message_id":351,
+                        "document":{"file_id":"AAAbotfileID"+part[-4:],
+                                    "file_size":9}}
+            raise AssertionError(method)
+        with patch.object(bot,"PART_BYTES",10), patch.object(bot,"credentials",
+                return_value=("123:abc","-100777123")), patch.object(bot,"_bot_call",
+                side_effect=fake_api):
+            with self.assertRaisesRegex(ValueError,"simulated disconnect"):
+                bot.send_archive(NAME,stage)
+            self.assertEqual(bot.available(),[],
+                             "Partial uploads must not be advertised as restorable")
+            self.assertTrue((bot.CATALOG/(NAME+".partial.json")).exists())
+            data=bot.send_archive(NAME,stage)
+        self.assertEqual(len(data["files"]),3)
+        self.assertEqual(len(bot.available()),1)
+        self.assertFalse((bot.CATALOG/(NAME+".partial.json")).exists())
+        first=[x for x in calls if x[0]=="sendDocument"
+               and x[1]["document"].endswith("part-0000")]
+        self.assertEqual(len(first),1,
+                         "Previously accepted file must not be resent after retry")
+
     def test_small_backup_single_document_keeps_download_catalog(self):
         path=self.root/"stage"/NAME
         path.write_bytes(b"small-backup")
