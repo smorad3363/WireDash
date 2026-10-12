@@ -121,7 +121,7 @@ export function filterAndSortPeers(peers, {
       case "time_remaining": return x.policy.timeRemainingDays;
       case "traffic_remaining": return x.policy.trafficRemainingGb;
       case "usage": return typeof x.peer.metered_data === "number" &&
-        Number.isFinite(x.peer.metered_data) ? -x.peer.metered_data : null;
+        Number.isFinite(x.peer.metered_data) && x.peer.metered_data >= 0 ? x.peer.metered_data : null;
       case "status": return x.summary.rank;
       case "access": return x.peer.restricted ? 1 : 0;
       default: return null;
