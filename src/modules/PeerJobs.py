@@ -133,12 +133,19 @@ class PeerJobs:
                         Value=quota_payload(limit, new_factor)))
         self.ledger.change_many(transitions, self._weights,
                                 reason="global", update_callback=apply_changes)
-        self.__getJobs()
-        for c in self.WireguardConfigurations.values():
-            for peer in c.getPeersList():
-                peer.getJobs()
-            for peer in c.getRestrictedPeersList():
-                peer.getJobs()
+        # The SQLite transaction is now committed. Refreshing UI peer objects
+        # is best-effort: a transient refresh failure must NOT cause the INI
+        # caller to roll back the saved default while DB billing is already
+        # committed, leaving a mismatch between default and actual factors.
+        try:
+            self.__getJobs()
+            for c in self.WireguardConfigurations.values():
+                for peer in c.getPeersList():
+                    peer.getJobs()
+                for peer in c.getRestrictedPeersList():
+                    peer.getJobs()
+        except Exception:
+            current_app.logger.exception("Traffic factor applied; peer job view refresh deferred")
 
     def forget_weights(self, configuration, peers):
         """Reset factor on deletion; retain tombstone to block historic backfill."""
