@@ -16,15 +16,23 @@ matching" controls. Maximum **200 peers per write operation**.
 
 ## Meaning of "unlimited" and expired
 
-"No active limit" means no **active** matching restriction job appears in
-the unchanged API response. The backend can expire/remove jobs after enforcing
-them, and an old restricted peer may no longer have its historical job in the
-current response. Such a peer can appear to have no active limit but remain
-restricted. Older custom `total_data`, `total_receive`, `total_sent` or
-nonstandard time rules show "unknown" rather than an invented quota. The
-browser interprets the server's timezone-naive scheduled dates in the browser
-timezone, so the result is a management aid, not a substitute for reviewing
-specific peer jobs. No action is triggered automatically from a status filter.
+The existing peer-list API exposes **active jobs only**. When a time or
+traffic rule finishes, the scheduler closes that job and removes it from the
+active list. The API does not supply a reliable historic expiry reason for
+each restricted peer; manual restrictions are indistinguishable from completed
+time/traffic jobs. Consequently a **restricted** peer with no active rule is
+shown as **unknown**, not unlimited, and is included in the Unknown/Review
+filter. Only an **allowed** peer with no active rule is displayed as "no
+active limit". A historical expired user whose rule is closed is *not*
+fabricated into the Time expired / Traffic expired filter. Legacy
+`total_data`, `total_receive`, `total_sent` and nonstandard time rules
+also remain unknown. No filter triggers any access change.
+
+Scheduled dates are stored as timezone-naive server wall times. The manager
+defaults to the managed deployment's `Europe/Istanbul` timezone and lets
+the admin explicitly enter the server's actual `WGD_TZ`. Date preview and
+job values use that server timezone, **never browser local time**, including
+across DST boundaries.
 
 ## Existing API operations
 
@@ -32,21 +40,39 @@ specific peer jobs. No action is triggered automatically from a status filter.
   `{peers: [...ids]}` payload.
 - Allow access: `POST /api/allowAccessPeers/<configuration>`.
 - Add time or quota: `POST /api/savePeerScheduleJob` with an existing Job
-  object, respecting existing quota weight and the `date`/`quota_total_data`
-  policy shapes. Ambiguous/multiple policies are skipped. Time extension adds
-  days to the later of now and the current future expiry; adding traffic
-  increases the existing quota or creates a first quota starting from
-  consumed usage.
+  object, using existing `date`/`quota_total_data` policy shapes.
+  Ambiguous/multiple or legacy policies are rejected in the preview. Time
+  extension adds whole days to the later of the SERVER's current wall-clock
+  timestamp and any unexpired deadline. Traffic extension grants the selected
+  **additional metered GB**: new limit = max(old quota, current metered usage)
+  + added GB. It does NOT zero previous usage or silently use an exhausted
+  quota as the base. Existing active quota weights are retained. If a quota
+  rule has already closed, raw/metered counters infer the persistent weight
+  when usage is positive. At zero usage, prior weight cannot be inferred:
+  explicit consent for factor 1 is required, or that peer is skipped.
+- **Restricted-peer renewal safety:** the existing Save Job endpoint rejects
+  restricted peers, and no other old endpoint can save such a job directly.
+  The operator must explicitly consent to a short period of temporary access
+  (up to 20 selected peers per operation). UI calls old Allow Access, then
+  Save Job, then **re-restricts** in a `finally` block, and independently
+  verifies that the peer remains restricted. A failed restriction verification
+  raises a CRITICAL error and stops further processing. There remains a
+  short-lived exposure window while access is enabled. Without accepting this
+  trade-off, cancel renewal and use a maintenance procedure. Renewal never
+  assumes manual restriction may be removed and **does not auto-unrestrict**.
+  A separate explicit Allow Access is required after checking all peer limits.
 - Add/remove an existing tag: `POST /api/updateWireguardConfigurationInfo`
   with `Key: "PeerGroups"`. Refreshes current tag memberships before write.
 - Delete: `POST /api/deletePeers/<configuration>` after exact
   `DELETE <count>` confirmation.
 
-Before writing, the UI reloads the current peer list and validates the
-selected identities. A per-peer status summary shows successful and failed
-writes. Bulk jobs are **not transactional**, so partially successful actions
-must be reviewed. Extending a policy does not automatically undo a previous
-restriction; select the correct peers and explicitly allow access if needed.
+The UI shows a per-peer new-date/new-quota preview BEFORE any write, then
+reloads the current peer list and revalidates IDs, selected access state and
+selected job values. Bulk writes are NOT transactional; per-peer failures must
+be reviewed. For security the manager aborts a restricted batch when it
+cannot verify that original restrictions are restored. A changed policy does
+not automatically clear a previously imposed restriction: explicitly Allow
+Access only after considering other limits.
 
 No new route, request parameter, authorization rule, backend method, JSON
 response field, or bot API behavior is introduced.
