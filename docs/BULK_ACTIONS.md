@@ -130,9 +130,9 @@ response field, or bot API behavior is introduced.
 ## Rollback
 
 The previous published release is pinned at
-`backup/pre-bulk-table-ui-2026-10-12`, commit
-`e878ddb553281c822103e058305ac5ce35328ddd`, with immutable
-Docker image `ghcr.io/smorad3363/wiredash:sha-e878ddb553281c822103e058305ac5ce35328ddd`.
+`backup/pre-data-sort-weight-settings-2026-10-12`, commit
+`e9697a05cecd51f572688d5d1f53f451b3d343b8`, with immutable
+Docker image `ghcr.io/smorad3363/wiredash:sha-e9697a05cecd51f572688d5d1f53f451b3d343b8`.
 The older pre-Bulk Manager snapshot also remains at
 `backup/pre-bulk-actions-2026-10-12`,
 `8c05f0abb3b11ee509c44b7c531f667df5626cdb`.
