@@ -303,6 +303,14 @@ class Peer:
         old_sent = (self.total_sent or 0) + (self.cumu_sent or 0)
         try:
             with self.configuration.engine.begin() as conn:
+                # The DB has the authoritative transfer counters; cached Peer
+                # objects may lag behind the live WireGuard sampler.
+                persisted = conn.execute(self.configuration.peersTable.select().where(
+                    self.configuration.peersTable.c.id == self.id
+                )).mappings().first()
+                if persisted is not None:
+                    old_receive = float(persisted["total_receive"] or 0) + float(persisted["cumu_receive"] or 0)
+                    old_sent = float(persisted["total_sent"] or 0) + float(persisted["cumu_sent"] or 0)
                 if mode == "total":
                     conn.execute(
                         self.configuration.peersTable.update().values({
