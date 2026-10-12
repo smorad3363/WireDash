@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import {DEFAULT_SERVER_TIME_ZONE, filterAndSortPeers, peerPolicy, plannedJob, validTimeZone}
   from "../src/static/app/src/utilities/peerBulkPolicy.mjs";
+import {renewRestrictedWithRestore} from "../src/static/app/src/utilities/peerBulkRenewal.mjs";
 
 // Browser running in UTC or Europe/Berlin must schedule the server's local wall
 // time (default Europe/Istanbul) identically.
@@ -105,6 +106,64 @@ assert.throws(()=>plannedJob(sample[2],"wg0","time",0,now,()=>""),/positive/);
 assert.throws(()=>plannedJob(sample[2],"wg0","time",5,now,()=>"a",
   {serverTimeZone:"Invalid/TimeZone"}),/Invalid server timezone/);
 
+// Simulate old endpoints, including partial HTTP failures and a failed
+// access-restoration attempt. No live users, keys or network calls involved.
+const simulate = async ({consent=true, allow=true, save=true, restrict=true, firstReadFails=false}={}) => {
+  let isRestricted = true, reads=0;
+  const calls=[];
+  const post=async (url) => {
+    calls.push(url);
+    if (url.includes("/allowAccessPeers/")) {
+      isRestricted=false; // worst case: HTTP reports failure AFTER peer moved
+      return {status:allow, message:allow?"OK":"Allow response failed"};
+    }
+    if (url === "/api/savePeerScheduleJob") return {status:save, message:save?"OK":"Save failed"};
+    if (url.includes("/restrictPeers/")) {
+      if (restrict) isRestricted=true;
+      return {status:restrict};
+    }
+    throw new Error("Unexpected endpoint "+url);
+  };
+  const get=async () => {
+    reads++;
+    if(firstReadFails && reads===1) throw new Error("GET failed");
+    return {status:true,data:{configurationRestrictedPeers:isRestricted?[{id:"p1"}]:[]}};
+  };
+  const result=await renewRestrictedWithRestore({
+    id:"p1",configuration:"wg0",job:{JobID:"job1"},consent,post,get
+  });
+  return {result,calls,isRestricted,reads};
+};
+const success=await simulate();
+assert.deepEqual(success.result,{saved:true,restored:true,error:""});
+assert.equal(success.isRestricted,true);
+assert.deepEqual(success.calls,[
+  "/api/allowAccessPeers/wg0","/api/savePeerScheduleJob","/api/restrictPeers/wg0"
+]);
+const saveFailed=await simulate({save:false});
+assert.equal(saveFailed.result.saved,false);
+assert.equal(saveFailed.result.restored,true);
+assert.equal(saveFailed.isRestricted,true);
+assert.match(saveFailed.result.error,/Save failed/);
+const allowFailed=await simulate({allow:false});
+assert.equal(allowFailed.result.saved,false);
+assert.equal(allowFailed.result.restored,true);
+assert.equal(allowFailed.isRestricted,true);
+assert.equal(allowFailed.calls.includes("/api/savePeerScheduleJob"),false);
+const restrictFailed=await simulate({restrict:false});
+assert.equal(restrictFailed.result.saved,true);
+assert.equal(restrictFailed.result.restored,false);
+assert.equal(restrictFailed.isRestricted,false);
+assert.match(restrictFailed.result.error,/CRITICAL/);
+const firstGetFailure=await simulate({firstReadFails:true});
+assert.equal(firstGetFailure.result.restored,true);
+assert.equal(firstGetFailure.isRestricted,true);
+const noConsent=await simulate({consent:false});
+assert.equal(noConsent.result.saved,false);
+assert.equal(noConsent.result.restored,true);
+assert.equal(noConsent.calls.length,0);
+assert.match(noConsent.result.error,/consent/);
+
 // Static guard: existing endpoints and explicit consent/compensation, without
 // ever changing the backend routes or bot-facing response payloads.
 const ui=readFileSync("src/static/app/src/components/configurationComponents/peerListComponents/peerBulkManager.vue","utf8");
@@ -115,7 +174,9 @@ for(const e of ["/api/getWireguardConfigurationInfo","/api/savePeerScheduleJob",
 assert.match(ui,/temporarily allowing each restricted peer/);
 assert.match(ui,/temporaryAccessConsent/);
 assert.match(ui,/Restoring restriction/);
-assert.match(ui,/CRITICAL: original restriction could not be verified/);
+assert.match(ui,/CRITICAL: Restricted peer/);
+const flow=readFileSync("src/static/app/src/utilities/peerBulkRenewal.mjs","utf8");
+assert.match(flow,/CRITICAL: original restriction could not be verified/);
 assert.match(ui,/renewalPreview/);
 assert.match(ui,/serverTimeZone/);
 assert.match(ui,/maxOperation = 200/);
