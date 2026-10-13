@@ -45,8 +45,8 @@ for name,node in a.items():
         # Adding an admin-only UI local-file deletion operation is NOT
         # permission to change any bot API or weaken backup authentication.
         baseline=b[name]
-        assert ast.dump(node.body[:8], include_attributes=False) == ast.dump(
-            baseline.body[:8], include_attributes=False), (
+        assert [ast.dump(stmt, include_attributes=False) for stmt in node.body[:8]] == [
+            ast.dump(stmt, include_attributes=False) for stmt in baseline.body[:8]], (
                 "Backup admin/session/origin/JSON validation changed")
         new_source=ast.unparse(baseline)
         for required in ('_backup_ui_authorized()', 'Sec-Fetch-Site',
