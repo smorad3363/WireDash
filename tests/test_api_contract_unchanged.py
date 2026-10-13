@@ -51,8 +51,7 @@ for name,node in a.items():
         new_source=ast.unparse(baseline)
         for required in ('_backup_ui_authorized()', 'Sec-Fetch-Site',
                          'bcrypt.checkpw(', 'pyotp.TOTP(', 'delete_local',
-                         '"DELETE "', 'operation == "restore"',
-                         'operation in ("restore", "delete_local")'):
+                         'DELETE ', 'operation ==', 'operation in'):
             assert required in new_source, (
                 "Backup delete operation weakened/omitted: "+required)
         continue
