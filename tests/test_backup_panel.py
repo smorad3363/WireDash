@@ -74,6 +74,64 @@ class HostAgentContract(unittest.TestCase):
                 self.assertIn("--restore-approved", calls[-1])
                 self.assertEqual(len(calls[-1][-1]), 12)
 
+    def test_local_backup_delete_never_touches_telegram_or_last_copy(self):
+        import builtins
+        with tempfile.TemporaryDirectory() as root:
+            base = Path(root)
+            first = "wgdashboard-20261010-030000.tar.gz"
+            second = "wgdashboard-20261010-031000.tar.gz"
+            a, b = base / first, base / second
+            for p in (a,b):
+                p.write_bytes(b"dummy-only-test")
+            Path(str(a)+".sha256").write_text("a"*64)
+            Path(str(a)+".sent").touch()
+            Path(str(b)+".imported").touch()
+            normal_open = builtins.open
+            def isolated_locks(path, *args, **kwargs):
+                if path == "/run/wgdashbackup.lock":
+                    path = base / "backup.lock"
+                elif path == "/run/wgdashbackup-restore.lock":
+                    path = base / "restore.lock"
+                return normal_open(path, *args, **kwargs)
+            with patch.object(agent,"ARCHIVES",base), \\
+                 patch("builtins.open",side_effect=isolated_locks), \\
+                 patch.object(agent,"read_progress",return_value=None), \\
+                 patch.object(agent,"status",return_value={"available":True,"archives":[]}):
+                with self.assertRaisesRegex(ValueError,"exact"):
+                    agent.call("delete_local",{"name":first,"confirmation":"DELETE wrong"})
+                with self.assertRaisesRegex(ValueError,"Invalid"):
+                    agent.call("delete_local",{"name":"../../etc/shadow",
+                                               "confirmation":"DELETE ../../etc/shadow"})
+                result=agent.call("delete_local",{
+                    "name":first,"confirmation":"DELETE "+first})
+                self.assertEqual(result["deleted"],first)
+                self.assertFalse(a.exists())
+                self.assertFalse(Path(str(a)+".sent").exists())
+                self.assertFalse(Path(str(a)+".sha256").exists())
+                self.assertTrue(b.exists())
+                with self.assertRaisesRegex(ValueError,"last local"):
+                    agent.call("delete_local",{
+                        "name":second,"confirmation":"DELETE "+second})
+                # A running restore ALWAYS blocks local deletion, even if
+                # a race would otherwise allow a safe last-copy operation.
+                with patch.object(agent,"read_progress",return_value={"state":"running"}):
+                    with self.assertRaisesRegex(ValueError,"Restore is queued"):
+                        agent.call("delete_local",{
+                            "name":second,"confirmation":"DELETE "+second})
+
+    def test_local_delete_must_be_admin_password_and_mfa_gated(self):
+        code=Path("src/dashboard.py").read_text()
+        self.assertIn('operation in ("restore", "delete_local")',code)
+        self.assertIn('("RESTORE " if operation == "restore" else "DELETE ")',code)
+        self.assertIn('bcrypt.checkpw(',code)
+        self.assertIn('pyotp.TOTP(',code)
+        self.assertIn('if not _backup_ui_authorized():',code)
+        ui=Path("src/static/app/src/components/settingsComponent/systemBackupSettings.vue").read_text()
+        self.assertIn('Delete local',ui)
+        self.assertIn('deleteConfirmation',ui)
+        self.assertIn('MFA code (if enabled)',ui)
+        self.assertNotIn("deleteMessage",Path("deploy/wgdashbackup-panel-agent.py").read_text())
+
     def test_socket_protocol_loopback_only(self):
         import threading
         from modules import BackupPanelBridge as bridge
