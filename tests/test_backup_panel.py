@@ -164,7 +164,7 @@ class HostAgentContract(unittest.TestCase):
         self.assertIn('parsed.netloc != request.host', dashboard)
         self.assertIn('bcrypt.checkpw(', dashboard)
         self.assertIn('pyotp.TOTP(', dashboard)
-        self.assertIn('"RESTORE " + name', dashboard)
+        self.assertIn('("RESTORE " if operation == "restore" else "DELETE ") + name', dashboard)
         compose = Path("deploy/compose.yaml").read_text()
         self.assertIn("/run/wgdashbackup-panel:/run/wgdashbackup-panel:ro", compose)
         self.assertNotIn("/var/run/docker.sock", compose)
