@@ -41,6 +41,22 @@ class NormalizeDefault(ast.NodeTransformer):
             node.args.pop()
         return node
 for name,node in a.items():
+    if name=="API_UI_SystemBackupAction":
+        # Adding an admin-only UI local-file deletion operation is NOT
+        # permission to change any bot API or weaken backup authentication.
+        baseline=b[name]
+        assert ast.dump(node.body[:8], include_attributes=False) == ast.dump(
+            baseline.body[:8], include_attributes=False), (
+                "Backup admin/session/origin/JSON validation changed")
+        new_source=ast.unparse(baseline)
+        for required in ('_backup_ui_authorized()', 'Sec-Fetch-Site',
+                         'bcrypt.checkpw(', 'pyotp.TOTP(', 'delete_local',
+                         '"DELETE "', 'operation == "restore"',
+                         'operation in ("restore", "delete_local")'):
+            assert required in new_source, (
+                "Backup delete operation weakened/omitted: "+required)
+        continue
+
     # The prior release already includes the optional server-wide default
     # argument; normalize BOTH baseline and changed route for later PRs.
     # Otherwise an unchanged API_addPeers fails after the first merge.
