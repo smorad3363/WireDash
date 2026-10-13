@@ -93,10 +93,10 @@ class HostAgentContract(unittest.TestCase):
                 elif path == "/run/wgdashbackup-restore.lock":
                     path = base / "restore.lock"
                 return normal_open(path, *args, **kwargs)
-            with patch.object(agent,"ARCHIVES",base), \\
-                 patch("builtins.open",side_effect=isolated_locks), \\
-                 patch.object(agent,"read_progress",return_value=None), \\
-                 patch.object(agent,"status",return_value={"available":True,"archives":[]}):
+            with (patch.object(agent,"ARCHIVES",base),
+                  patch("builtins.open",side_effect=isolated_locks),
+                  patch.object(agent,"read_progress",return_value=None),
+                  patch.object(agent,"status",return_value={"available":True,"archives":[]})):
                 with self.assertRaisesRegex(ValueError,"exact"):
                     agent.call("delete_local",{"name":first,"confirmation":"DELETE wrong"})
                 with self.assertRaisesRegex(ValueError,"Invalid"):
