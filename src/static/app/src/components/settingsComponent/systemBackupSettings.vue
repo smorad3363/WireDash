@@ -62,6 +62,28 @@ const downloadFromTelegram = async () => {
     "Telegram backup download scheduled on VPS")
   await pollTelegram()
 }
+const deleteName = ref("")
+const deleteConfirmation = ref("")
+const deletePassword = ref("")
+const deleteTotp = ref("")
+const closeDelete = () => {
+  deleteName.value = ""
+  deleteConfirmation.value = ""
+  deletePassword.value = ""
+  deleteTotp.value = ""
+}
+const deleteLocal = async () => {
+  const name = deleteName.value
+  if (!name || busy.value || deleteConfirmation.value !== `DELETE ${name}` ||
+      !deletePassword.value) return
+  await execute("delete_local", {
+    name, confirmation:deleteConfirmation.value,
+    password:deletePassword.value, totp:deleteTotp.value
+  }, "Local VPS backup deleted; Telegram files and bot catalog were not changed")
+  deletePassword.value = ""
+  deleteTotp.value = ""
+  if (!messageError.value) closeDelete()
+}
 const restoreName = ref("")
 const confirmation = ref("")
 const password = ref("")
@@ -452,6 +474,39 @@ onUnmounted(() => {
                     @click="verify(file.name)">Verify</button>
             <button class="btn btn-sm btn-outline-danger" :disabled="busy"
                     @click="restoreName = file.name; confirmation = ''; password = ''; totp = ''">Restore...</button>
+            <button class="btn btn-sm btn-outline-danger" type="button" :disabled="busy"
+                    @click="deleteName = file.name; deleteConfirmation = ''; deletePassword = ''; deleteTotp = ''">
+              Delete local
+            </button>
+          </div>
+        </div>
+        <div v-if="deleteName" class="border border-danger rounded-3 p-3 d-flex flex-column gap-2" role="group" aria-label="Confirm local backup deletion">
+          <h6 class="text-danger mb-0">Delete VPS backup only</h6>
+          <p class="small mb-1">
+            Permanently removes <strong>{{deleteName}}</strong> from this VPS only.
+            Telegram messages and the bot backup catalog are NOT deleted.
+            A file labeled "Local only" has no confirmed Telegram delivery marker
+            and might be your only recoverable copy. Verify another backup first.
+            The last local full backup cannot be deleted.
+          </p>
+          <label class="small">Type exactly: <code>DELETE {{deleteName}}</code>
+            <input class="form-control form-control-sm mt-1" v-model="deleteConfirmation"
+                   autocomplete="off" spellcheck="false" :disabled="busy">
+          </label>
+          <label class="small">Current admin password
+            <input class="form-control form-control-sm mt-1" type="password"
+                   v-model="deletePassword" autocomplete="current-password" :disabled="busy">
+          </label>
+          <label class="small">MFA code (if enabled)
+            <input class="form-control form-control-sm mt-1" v-model="deleteTotp"
+                   autocomplete="one-time-code" :disabled="busy">
+          </label>
+          <div class="d-flex flex-wrap gap-2">
+            <button type="button" class="btn btn-sm btn-danger"
+                    :disabled="busy || !deletePassword || deleteConfirmation !== `DELETE ${deleteName}`"
+                    @click="deleteLocal">Confirm delete from VPS</button>
+            <button type="button" class="btn btn-sm btn-outline-secondary"
+                    :disabled="busy" @click="closeDelete">Cancel</button>
           </div>
         </div>
         <div v-if="restoreName" class="border border-danger rounded-3 p-3 d-flex flex-column gap-2">

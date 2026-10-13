@@ -454,7 +454,7 @@ def API_UI_SystemBackupAction():
     operation = data.get("operation")
     allowed = ("set_interval", "enable", "disable", "set_telegram",
                "backup_now", "verify", "restore", "import_root", "download_telegram",
-               "download_bot_backup")
+               "download_bot_backup", "delete_local")
     if operation not in allowed:
         return ResponseObject(False, "Unsupported backup operation", status_code=400)
     fields = {}
@@ -465,12 +465,12 @@ def API_UI_SystemBackupAction():
     elif operation == "set_telegram":
         fields["token"] = data.get("token")
         fields["chat"] = data.get("chat")
-    elif operation in ("verify", "restore", "import_root", "download_bot_backup"):
+    elif operation in ("verify", "restore", "import_root", "download_bot_backup", "delete_local"):
         fields["name"] = data.get("name")
-    if operation == "restore":
-        # A destructive restore is deliberately NOT authorized by an API key or
-        # browser login alone. The current account password (+ MFA, if enabled)
-        # and exact archive-name confirmation are mandatory.
+    if operation in ("restore", "delete_local"):
+        # Destructive backup operations are not authorized by an API key or
+        # browser login alone. Require current admin password (+ MFA) and
+        # the exact selected filename. All bot API endpoints stay unchanged.
         password = data.get("password")
         if not isinstance(password, str) or len(password) > 1024:
             return ResponseObject(False, "Current admin password required", status_code=403)
@@ -490,8 +490,9 @@ def API_UI_SystemBackupAction():
             return ResponseObject(False, "Password or MFA verification failed", status_code=403)
         name = fields.get("name", "")
         if (not isinstance(name, str)
-                or data.get("confirmation") != "RESTORE " + name):
-            return ResponseObject(False, "Type RESTORE and the selected filename exactly", status_code=400)
+                or data.get("confirmation") !=
+                ("RESTORE " if operation == "restore" else "DELETE ") + name):
+            return ResponseObject(False, "Type the operation and selected filename exactly", status_code=400)
         fields["confirmation"] = data.get("confirmation")
     result = backup_panel_call(operation, **fields)
     return ResponseObject(result["ok"], result.get("message"), result.get("data"))

@@ -14,6 +14,7 @@ import stat
 import subprocess
 import uuid
 import hashlib
+import fcntl
 import wgdashbackup_import as importer
 from wgdashbackup_progress import read_progress, write_progress
 import wgdashbackup_telegram as telegram
@@ -54,6 +55,43 @@ def archive_path(name):
     if not path.is_file() or path.is_symlink():
         raise ValueError("Backup archive is not available")
     return path
+
+
+def delete_local_archive(name, confirmation):
+    """Delete only the chosen VPS archive, with explicit admin confirmation.
+
+    Lock out concurrent backup/restore workers; never remove Telegram content
+    or root-only catalog. At least one local full backup must remain.
+    """
+    if not isinstance(name, str) or confirmation != "DELETE " + name:
+        raise ValueError("Type DELETE and the exact archive filename")
+    # Same advisory locks the existing host workers hold while creating or
+    # restoring snapshots. No Docker API access and no VPN restart.
+    with open("/run/wgdashbackup.lock", "a+") as backup_lock, \
+         open("/run/wgdashbackup-restore.lock", "a+") as restore_lock:
+        try:
+            fcntl.flock(backup_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(restore_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise ValueError("Backup or restore is active; retry deletion later") from None
+        running = read_progress()
+        if running and running["state"] in ("queued", "running"):
+            raise ValueError("Restore is queued or running; deleting backups is disabled")
+        path = archive_path(name)
+        archives = list_archives()
+        # Include all on-disk full backups, not only the first 30 UI entries.
+        others = [p for p in ARCHIVES.iterdir() if VALID_NAME.fullmatch(p.name)
+                  and p.is_file() and not p.is_symlink()]
+        if len(others) <= 1:
+            raise ValueError("The last local full backup is protected")
+        # Non-symlink exact sidecars ONLY; do not remove Telegram catalog IDs.
+        removed = path.stat().st_size
+        path.unlink()
+        for suffix in (".sha256", ".sent", ".imported"):
+            marker = Path(str(path) + suffix)
+            if marker.is_file() and not marker.is_symlink():
+                marker.unlink()
+        return {"deleted": name, "freedBytes": removed, "status": status()}
 
 
 def list_archives():
@@ -110,6 +148,8 @@ def status():
 def call(operation, payload):
     if operation == "status":
         return status()
+    if operation == "delete_local":
+        return delete_local_archive(payload.get("name"), payload.get("confirmation"))
     if operation == "set_interval":
         minutes = payload.get("minutes")
         if type(minutes) is not int or not 5 <= minutes <= 1440:
