@@ -1144,7 +1144,7 @@ class WireguardConfiguration:
                         check = ipaddress.ip_network(ppip[0])
                         existedAddress.add(check)
                     except Exception as e:
-                        current_app.logger.error(f"{self.Name} peer {p.id} have invalid ip", e)
+                        current_app.logger.warning("%s peer %s has invalid IP; ignoring entry", self.Name, p.id)
         configurationAddresses = self.Address.split(',')
         for ca in configurationAddresses:
             ca = ca.strip()
@@ -1158,7 +1158,7 @@ class WireguardConfiguration:
                         if p.version == network.version and p.subnet_of(network):
                             availableAddress[ca] -= 1
             except Exception as e:
-                current_app.logger.error(f"Error: Failed to parse IP address {ca} from {self.Name}", e)
+                current_app.logger.warning("Failed to parse IP address %s from %s: %s", ca, self.Name, e)
         return True, availableAddress
 
     def getAvailableIP(self, threshold = 255):
@@ -1175,7 +1175,7 @@ class WireguardConfiguration:
                         check = ipaddress.ip_network(ppip[0])
                         existedAddress.add(check.compressed)
                     except Exception as e:
-                        current_app.logger.error(f"{self.Name} peer {p.id} have invalid ip", e)
+                        current_app.logger.warning("%s peer %s has invalid IP; ignoring entry", self.Name, p.id)
         configurationAddresses = self.Address.split(',')
         for ca in configurationAddresses:
             ca = ca.strip()
@@ -1191,7 +1191,7 @@ class WireguardConfiguration:
                         availableAddress[ca] = list(islice(filter(lambda ip : ip not in existedAddress,
                                                                   map(lambda iph : ipaddress.ip_network(iph).compressed, network.hosts())), threshold))
             except Exception as e:
-                current_app.logger.error(f"Failed to parse IP address {ca} from {self.Name}", e)
+                current_app.logger.warning("Failed to parse IP address %s from %s: %s", ca, self.Name, e)
         return True, availableAddress
 
     def getRealtimeTrafficUsage(self):
