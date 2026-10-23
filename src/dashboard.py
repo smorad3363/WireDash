@@ -1031,6 +1031,16 @@ def API_allowAccessPeersLegacy() -> ResponseObject:
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
         return ResponseObject(False, "A JSON object is required", status_code=400)
+    # Record only FIELD NAMES/types to diagnose unknown bot payloads.
+    # Never log body values, peer keys, API tokens or private credentials.
+    known_fields = ("peers", "peer", "id", "public_key", "configurationName",
+                    "configName", "configuration", "ConfigurationName",
+                    "Configuration", "config_name")
+    current_app.logger.info(
+        "Legacy allow-access payload shape: fields=%s, peers_type=%s",
+        ",".join(k for k in known_fields if k in data) or "(none)",
+        type(data.get("peers")).__name__
+    )
     peers = data.get("peers")
     if (not isinstance(peers, list) or not 1 <= len(peers) <= 100
             or any(not isinstance(p, str) or not p.strip() for p in peers)
