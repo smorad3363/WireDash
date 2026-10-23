@@ -3,7 +3,7 @@
 
 Allows ONLY the internal default lookup in existing POST /api/addPeers handler.
 The endpoint, required fields, other handler AST and returns stay identical.
-Permits ONLY the reviewed POST /api/allowAccessPeers/ compatibility alias.
+Permits ONLY reviewed changes to the isolated legacy allow-access compatibility alias.
 Existing bot endpoints, request fields and response schemas remain unchanged.
 """
 import ast
@@ -43,6 +43,13 @@ class NormalizeDefault(ast.NodeTransformer):
             node.args.pop()
         return node
 for name,node in a.items():
+    if name=="API_allowAccessPeersLegacy":
+        # Reviewed legacy compatibility shim only. The original upstream
+        # /api/allowAccessPeers/<configName> remains AST-identical and all
+        # alias behavioral cases are checked in test_allow_access_compat.py.
+        assert "API_allowAccessPeers(name)" in ast.unparse(b[name])
+        assert "request.get_json(silent=True)" in ast.unparse(b[name])
+        continue
     if name=="API_UI_SystemBackupAction":
         # Adding an admin-only UI local-file deletion operation is NOT
         # permission to change any bot API or weaken backup authentication.
