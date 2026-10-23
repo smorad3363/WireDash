@@ -1018,6 +1018,49 @@ def API_allowAccessPeers(configName: str) -> ResponseObject:
         return ResponseObject(status, msg)
     return ResponseObject(False, "Configuration does not exist")
 
+@app.post(f'{APP_PREFIX}/api/allowAccessPeers/')
+def API_allowAccessPeersLegacy() -> ResponseObject:
+    """Safely accept legacy bot POSTs that omit the configuration path segment.
+
+    The canonical /api/allowAccessPeers/<configName> remains unchanged.
+    Never guess when peers cannot be uniquely assigned to a configuration.
+    Authentication is enforced by the existing before_request guard.
+    """
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return ResponseObject(False, "A JSON object is required", status_code=400)
+    peers = data.get("peers")
+    if (not isinstance(peers, list) or not 1 <= len(peers) <= 100
+            or any(not isinstance(p, str) or not p.strip() for p in peers)
+            or len(peers) != len(set(peers))):
+        return ResponseObject(False, "Provide 1-100 distinct peer keys", status_code=400)
+
+    specified = data.get("configurationName", data.get("configName", data.get("configuration")))
+    if specified is not None and (not isinstance(specified, str) or not specified):
+        return ResponseObject(False, "Invalid configuration name", status_code=400)
+
+    matches = []
+    for name, configuration in WireguardConfigurations.items():
+        if specified is not None and name != specified:
+            continue
+        try:
+            restricted_keys = {p.id for p in configuration.getRestrictedPeersList()}
+        except Exception:
+            current_app.logger.exception("Failed to resolve legacy allow-access configuration")
+            return ResponseObject(False, "Could not check restricted peers", status_code=503)
+        if all(peer in restricted_keys for peer in peers):
+            matches.append(name)
+
+    if len(matches) != 1:
+        return ResponseObject(
+            False, "Cannot uniquely resolve restricted peers; use /api/allowAccessPeers/<configName>",
+            status_code=409
+        )
+    current_app.logger.info("Legacy allow-access API: configuration=%s count=%d",
+                            matches[0], len(peers))
+    return API_allowAccessPeers(matches[0])
+
+
 @app.post(f'{APP_PREFIX}/api/addPeers/<configName>')
 def API_addPeers(configName):
     if configName in WireguardConfigurations.keys():
