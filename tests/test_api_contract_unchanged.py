@@ -3,7 +3,8 @@
 
 Allows ONLY the internal default lookup in existing POST /api/addPeers handler.
 The endpoint, required fields, other handler AST and returns stay identical.
-Does not create endpoints, change request field names or response schemas.
+Permits ONLY the reviewed POST /api/allowAccessPeers/ compatibility alias.
+Existing bot endpoints, request fields and response schemas remain unchanged.
 """
 import ast
 import pathlib
@@ -26,7 +27,8 @@ def endpoints(src):
             out[node.name]=node
     return out
 a,b=endpoints(old),endpoints(new)
-assert set(a)==set(b), "Existing route handlers changed or new route added"
+assert not (set(a)-set(b)), "Existing route handler removed"
+assert set(b)-set(a) <= {"API_allowAccessPeersLegacy"}, "Unapproved new API route"
 class NormalizeDefault(ast.NodeTransformer):
     def visit_Call(self,node):
         self.generic_visit(node)
@@ -64,4 +66,4 @@ for name,node in a.items():
     rhs=ast.dump(NormalizeDefault().visit(b[name]) if name=="API_addPeers" else b[name],
                  include_attributes=False)
     assert lhs==rhs, "Existing API route modified: "+name
-print("PASS: no new/altered routes, request fields, return paths or bot handler logic")
+print("PASS: existing bot routes unchanged; only reviewed allow-access alias is permitted")

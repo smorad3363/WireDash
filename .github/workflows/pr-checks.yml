@@ -33,6 +33,8 @@ jobs:
         run: python3 tests/test_bot_catalog.py
       - name: Real wireback legacy archive and multipart verifier rehearsal
         run: python3 tests/test_backup_shell_verify.py
+      - name: Backward-compatible allow access without a configuration suffix
+        run: python3 tests/test_allow_access_compat.py
       - name: Peer traffic quota tests
         run: python3 tests/test_peer_limits.py
       - name: Polling and peer reuse regression tests
