@@ -1018,26 +1018,46 @@ def API_allowAccessPeers(configName: str) -> ResponseObject:
         return ResponseObject(status, msg)
     return ResponseObject(False, "Configuration does not exist")
 
+@app.post(f'{APP_PREFIX}/api/allowAccessPeers')
 @app.post(f'{APP_PREFIX}/api/allowAccessPeers/')
 def API_allowAccessPeersLegacy() -> ResponseObject:
-    """Safely accept legacy bot POSTs that omit the configuration path segment.
+    """Compatibility entrypoint for existing bots with no config in the URL.
 
-    The canonical /api/allowAccessPeers/<configName> remains unchanged.
-    Never guess when peers cannot be uniquely assigned to a configuration.
-    Authentication is enforced by the existing before_request guard.
+    Preserve the canonical upstream /api/allowAccessPeers/<configName>
+    API, authentication, and restricted-peer state transitions unchanged.
+    Allow an idempotent retry only for a peer already known as active.
+    Never infer a configuration from a peer name or a missing peer.
     """
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
         return ResponseObject(False, "A JSON object is required", status_code=400)
+    # Record only FIELD NAMES/types to diagnose unknown bot payloads.
+    # Never log body values, peer keys, API tokens or private credentials.
+    known_fields = ("peers", "peer", "id", "public_key", "configurationName",
+                    "configName", "configuration", "ConfigurationName",
+                    "Configuration", "config_name")
+    current_app.logger.info(
+        "Legacy allow-access payload shape: fields=%s, peers_type=%s",
+        ",".join(k for k in known_fields if k in data) or "(none)",
+        type(data.get("peers")).__name__
+    )
     peers = data.get("peers")
     if (not isinstance(peers, list) or not 1 <= len(peers) <= 100
             or any(not isinstance(p, str) or not p.strip() for p in peers)
             or len(peers) != len(set(peers))):
         return ResponseObject(False, "Provide 1-100 distinct peer keys", status_code=400)
 
-    specified = data.get("configurationName", data.get("configName", data.get("configuration")))
-    if specified is not None and (not isinstance(specified, str) or not specified):
-        return ResponseObject(False, "Invalid configuration name", status_code=400)
+    # Some existing bots use an empty URL suffix and send an empty config
+    # field, so treat empty hints as unspecified. Reject conflicting hints.
+    hints = [data[key] for key in (
+        "configurationName", "configName", "configuration", "ConfigurationName",
+        "Configuration", "config_name"
+    ) if key in data and data[key] is not None and data[key] != ""]
+    if (any(not isinstance(v, str) for v in hints)
+            or len(set(hints)) > 1):
+        return ResponseObject(False, "Invalid or conflicting configuration names",
+                              status_code=400)
+    specified = hints[0] if hints else None
 
     matches = []
     for name, configuration in WireguardConfigurations.items():
@@ -1045,20 +1065,35 @@ def API_allowAccessPeersLegacy() -> ResponseObject:
             continue
         try:
             restricted_keys = {p.id for p in configuration.getRestrictedPeersList()}
+            active_keys = {p.id for p in configuration.getPeersList()}
         except Exception:
-            current_app.logger.exception("Failed to resolve legacy allow-access configuration")
-            return ResponseObject(False, "Could not check restricted peers", status_code=503)
-        if all(peer in restricted_keys for peer in peers):
-            matches.append(name)
+            current_app.logger.exception("Legacy allow-access: peer lookup failed")
+            return ResponseObject(False, "Could not check existing peer status",
+                                  status_code=503)
+        # Every requested key must already exist, in this SAME config.
+        if all(key in restricted_keys or key in active_keys for key in peers):
+            matches.append((name, configuration, restricted_keys))
 
     if len(matches) != 1:
         return ResponseObject(
-            False, "Cannot uniquely resolve restricted peers; use /api/allowAccessPeers/<configName>",
+            False, "Cannot uniquely resolve peers; specify a configuration name",
             status_code=409
         )
-    current_app.logger.info("Legacy allow-access API: configuration=%s count=%d",
-                            matches[0], len(peers))
-    return API_allowAccessPeers(matches[0])
+
+    name, configuration, restricted_keys = matches[0]
+    to_allow = [key for key in peers if key in restricted_keys]
+    if not to_allow:
+        # A bot retry after the first successful renewal is a no-op.
+        current_app.logger.info("Legacy allow-access: already active in %s", name)
+        return ResponseObject(True, "Peer access already allowed")
+    if len(to_allow) == len(peers):
+        # Reuse the original upstream route when every peer is restricted.
+        return API_allowAccessPeers(name)
+
+    # Mixed retry batch: never pass active peers to upstream, which would
+    # fail after already restoring earlier restricted peers.
+    status, message = configuration.allowAccessPeers(to_allow)
+    return ResponseObject(status, message)
 
 
 @app.post(f'{APP_PREFIX}/api/addPeers/<configName>')
