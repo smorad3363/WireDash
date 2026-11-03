@@ -224,6 +224,9 @@ fetch deploy/wgdashbackup_progress.py "$STAGE/wgdashbackup_progress.py"
 fetch deploy/wgdashbackup_telegram.py "$STAGE/wgdashbackup_telegram.py"
 fetch deploy/wgdashbackup_botfiles.py "$STAGE/wgdashbackup_botfiles.py"
 fetch deploy/wgdashbackup_retention.py "$STAGE/wgdashbackup_retention.py"
+fetch deploy/wgdashtraffic_compact.py "$STAGE/wgdashtraffic_compact.py"
+fetch deploy/wgdashtraffic-compact.service "$STAGE/wgdashtraffic-compact.service"
+fetch deploy/wgdashtraffic-compact.timer "$STAGE/wgdashtraffic-compact.timer"
 fetch deploy/wgdashbackup-panel.service "$STAGE/wgdashbackup-panel.service"
 fetch deploy/wgd-watchdog.sh "$STAGE/wgd-watchdog.sh"
 fetch deploy/wgd-watchdog.service "$STAGE/wgd-watchdog.service"
@@ -511,8 +514,12 @@ if ((SKIP_BACKUP==0)); then
   install -m 0600 "$STAGE/wgdashbackup_telegram.py" /usr/local/libexec/wgdashbackup_telegram.py
   install -m 0600 "$STAGE/wgdashbackup_botfiles.py" /usr/local/libexec/wgdashbackup_botfiles.py
   install -m 0600 "$STAGE/wgdashbackup_retention.py" /usr/local/libexec/wgdashbackup_retention.py
+  install -m 0700 "$STAGE/wgdashtraffic_compact.py" /usr/local/libexec/wgdashtraffic_compact.py
+  install -m 0644 "$STAGE/wgdashtraffic-compact.service" /etc/systemd/system/wgdashtraffic-compact.service
+  install -m 0644 "$STAGE/wgdashtraffic-compact.timer" /etc/systemd/system/wgdashtraffic-compact.timer
   install -m 0644 "$STAGE/wgdashbackup-panel.service" /etc/systemd/system/wgdashbackup-panel.service
   systemctl daemon-reload
+  systemctl enable --now wgdashtraffic-compact.timer
   systemctl enable --now wgdashbackup-panel.service
   if ((agent_changed)); then systemctl restart wgdashbackup-panel.service; fi
   systemctl is-active --quiet wgdashbackup-panel.service ||

@@ -183,7 +183,7 @@ class ImportBackupTests(unittest.TestCase):
         content = Path("src/dashboard.py").read_text()
         self.assertIn("def API_UI_SystemBackupImport():", content)
         self.assertIn("if not _backup_ui_authorized():", content)
-        self.assertIn('max_bytes = 900 * 1024 * 1024', content)
+        self.assertIn('max_bytes = 4 * 1024 * 1024 * 1024', content)
         self.assertIn('request.files.getlist("files")', content)
         self.assertIn('fields["name"] = data.get("name")', content)
         self.assertIn('operation == "import_upload"', Path("deploy/wgdashbackup-panel-agent.py").read_text())

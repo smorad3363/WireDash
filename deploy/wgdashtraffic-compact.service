@@ -1,0 +1,12 @@
+[Unit]
+Description=Compact old WireDash per-peer chart history (preserve totals)
+Wants=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/libexec/wgdashtraffic_compact.py
+Nice=15
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+TimeoutStartSec=0

@@ -24,13 +24,13 @@ BACKUP_BIN = "/usr/local/bin/wgdashbackup"
 # Legacy wireback archives are often sent as .part-0000 through Telegram.
 FILENAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,180}\.tar\.gz(?:\.part-([0-9]{3,4}))?$")
 UPLOAD_ID = re.compile(r"^[a-f0-9]{32}$")
-LIMIT_BYTES = 900 * 1024 * 1024
+LIMIT_BYTES = 4 * 1024 * 1024 * 1024
 # Full backups can contain multi-GiB SQLite DBs even when their compressed
 # Telegram parts are only a few hundred MiB. Bound the SUM of extracted data
 # instead of incorrectly rejecting any individual file above 512 MiB.
 LIMIT_EXTRACT_BYTES = 12 * 1024 * 1024 * 1024
 MIN_FREE_DISK_RESERVE = 1024 * 1024 * 1024
-MAX_FILES = 64
+MAX_FILES = 256
 MAX_TAR_MEMBERS = 25000
 
 
@@ -109,7 +109,7 @@ def _copy_parts(paths, destination):
                         break
                     total += len(chunk)
                     if total > LIMIT_BYTES:
-                        raise ValueError("Backup exceeds the 900 MiB import limit")
+                        raise ValueError("Backup exceeds the 4 GiB import limit")
                     digest.update(chunk)
                     out.write(chunk)
     if not total:

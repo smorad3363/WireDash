@@ -11,10 +11,11 @@ sys.path.insert(0, str(pathlib.Path("deploy").resolve()))
 import wgdashbackup_retention as retention
 
 class RetentionPolicy(unittest.TestCase):
-    def test_one_local_noon_per_day_and_cap_30(self):
+    def test_one_local_noon_per_day_and_cap_7(self):
         with tempfile.TemporaryDirectory() as root:
             folder = pathlib.Path(root)
-            with patch.object(retention,"backup_zone",return_value=ZoneInfo("Europe/Istanbul")):
+            with patch.object(retention,"backup_zone",return_value=ZoneInfo("Europe/Istanbul")), \
+                 patch.object(retention.shutil, "disk_usage", return_value=__import__("shutil")._ntuple_diskusage(150 * 1024**3, 10 * 1024**3, 140 * 1024**3)):
                 dates = []
                 for ago in range(36):
                     day = datetime(2026,10,12,tzinfo=ZoneInfo("Europe/Istanbul"))-timedelta(days=ago)
@@ -41,13 +42,15 @@ class RetentionPolicy(unittest.TestCase):
                 surviving=[p for p in folder.glob("wgdashboard-*.tar.gz")
                            if retention.AUTO.fullmatch(p.name) and
                               pathlib.Path(str(p)+".sent").exists()]
-                self.assertEqual(len(surviving),30)
+                self.assertEqual(len(surviving),8)
                 for p in surviving:
                     stamp=p.name.removeprefix("wgdashboard-").removesuffix(".tar.gz")
                     d=datetime.strptime(stamp,"%Y%m%d-%H%M%S").replace(
                         tzinfo=timezone.utc).astimezone(ZoneInfo("Europe/Istanbul"))
-                    self.assertEqual(d.hour,12)
-                    self.assertEqual(d.minute,0)
+                    # Seven noon snapshots plus the freshest successful backup.
+                    if p != max(surviving):
+                        self.assertEqual(d.hour,12)
+                        self.assertEqual(d.minute,0)
                 for p in (imported,pres,unsent):
                     self.assertTrue(p.exists())
                 # No message/file deletion was attempted against Telegram.

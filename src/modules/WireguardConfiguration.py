@@ -480,21 +480,33 @@ class WireguardConfiguration:
         self.Peers = tmpList
     
     def logPeersTraffic(self):
-        with self.engine.begin() as conn:
-            for tempPeer in self.Peers:
-                if tempPeer.status == "running":
-                    conn.execute(
-                        self.peersTransferTable.insert().values({
-                            "id": tempPeer.id,
-                            "total_receive": tempPeer.total_receive,
-                            "total_sent": tempPeer.total_sent,
-                            "total_data": tempPeer.total_data,
-                            "cumu_sent": tempPeer.cumu_sent,
-                            "cumu_receive": tempPeer.cumu_receive,
-                            "cumu_data": tempPeer.cumu_data,
-                            "time": datetime.now()
-                        })
-                    )
+        # The peer table is the authoritative cumulative traffic ledger.
+        # History rows are for charts only, so record at most one sample per
+        # peer every five minutes. Record immediately after a panel restart.
+        sampled_at = time.monotonic()
+        previous = getattr(self, "_traffic_history_logged", {})
+        rows = []
+        for peer in self.Peers:
+            if peer.status != "running":
+                continue
+            if sampled_at - previous.get(peer.id, float("-inf")) < 300:
+                continue
+            rows.append({
+                "id": peer.id,
+                "total_receive": peer.total_receive,
+                "total_sent": peer.total_sent,
+                "total_data": peer.total_data,
+                "cumu_sent": peer.cumu_sent,
+                "cumu_receive": peer.cumu_receive,
+                "cumu_data": peer.cumu_data,
+                "time": datetime.now(),
+            })
+        if rows:
+            with self.engine.begin() as conn:
+                conn.execute(self.peersTransferTable.insert(), rows)
+            for row in rows:
+                previous[row["id"]] = sampled_at
+            self._traffic_history_logged = previous
     
     def logPeersHistoryEndpoint(self):
         with self.engine.begin() as conn:

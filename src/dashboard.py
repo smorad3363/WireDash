@@ -383,7 +383,7 @@ def API_UI_SystemBackupImport():
             or request.headers.get("Sec-Fetch-Site", "same-origin")
             not in ("same-origin", "none")):
         return ResponseObject(False, "Same-origin browser request required")
-    max_bytes = 900 * 1024 * 1024
+    max_bytes = 4 * 1024 * 1024 * 1024
     if not request.content_length or request.content_length > max_bytes + 1048576:
         return ResponseObject(False, "Import request exceeds 900 MiB")
     files = request.files.getlist("files")

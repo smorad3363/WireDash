@@ -340,9 +340,26 @@ backup() {
   ensure_dirs; need_install; load_telegram
   exec 9>/run/wgdashbackup.lock
   if ! flock -n 9; then log 'A backup is already in progress; no concurrent run.'; return 0; fi
+  # Preflight retention runs even if a previous Telegram delivery failed.
+  # Older undelivered automatic archives cannot exhaust the VPS disk.
+  python3 /usr/local/libexec/wgdashbackup_retention.py "$OUT" ||
+    { fail 'Backup retention failed; refusing a new disk-heavy snapshot.'; return 1; }
+  local free_bytes source_bytes required_bytes total_bytes
+  free_bytes=$(df -B1 --output=avail "$OUT" | tail -1 | tr -d ' ')
+  total_bytes=$(df -B1 --output=size "$OUT" | tail -1 | tr -d ' ')
+  mount_sources
+  source_bytes=$(du -s -B1 "$DATA" 2>/dev/null | awk '{print $1}') || source_bytes=0
+  # Leave 12 GiB + 15% disk margin, and room for source snapshot and split parts.
+  required_bytes=$(( source_bytes * 3 + 12 * 1024 * 1024 * 1024 ))
+  if (( required_bytes < total_bytes * 15 / 100 )); then
+    required_bytes=$(( total_bytes * 15 / 100 ))
+  fi
+  if (( free_bytes < required_bytes )); then
+    fail "Insufficient free space for safe backup (available=$free_bytes required=$required_bytes)."
+    return 1
+  fi
   now_epoch > "$LAST_ATTEMPT"
   [[ $(docker inspect -f '{{.State.Running}}' "$CONTAINER") == true ]] || fail 'WGDashboard container is not running.'
-  mount_sources
   tmp=$(mktemp -d "$OUT/.working.XXXXXXXX")
   trap 'rm -rf -- "$tmp"' EXIT
   # Retry ONE previous incomplete Bot API upload before making a new snapshot.

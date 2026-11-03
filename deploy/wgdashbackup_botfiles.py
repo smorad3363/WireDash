@@ -32,7 +32,7 @@ NAME = re.compile(r"^wgdashboard-[0-9]{8}-[0-9]{6}\.tar\.gz$")
 FILE_ID = re.compile(r"^[A-Za-z0-9_-]{8,300}$")
 SHA = re.compile(r"^[a-f0-9]{64}$")
 PART_BYTES = 18000000  # below Telegram cloud getFile 20 MB limit
-MAX_PARTS = 64
+MAX_PARTS = 256
 
 
 def credentials():

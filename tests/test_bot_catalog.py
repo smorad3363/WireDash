@@ -231,7 +231,7 @@ class BotCatalogTests(unittest.TestCase):
         self.assertIn("split -b 18000000",shell)
         self.assertIn("wgdashbackup_botfiles.py send",shell)
         self.assertNotIn("split -b 45000000",shell)
-        self.assertIn("MAX_FILES = 64",Path("deploy/wgdashbackup_import.py").read_text())
+        self.assertIn("MAX_FILES = 256",Path("deploy/wgdashbackup_import.py").read_text())
         installer=Path("install.sh").read_text()
         self.assertIn("wgdashbackup_botfiles.py",installer)
 
