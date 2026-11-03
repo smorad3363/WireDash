@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Verify API trace redaction and rotation without touching live WireDash data."""
-import importlib.util
 import json
 from pathlib import Path
 import sys
@@ -20,10 +19,8 @@ if "flask" not in sys.modules:
         flask.session = {}
         sys.modules["flask"] = flask
 
-source = Path("src/modules/ApiRequestAudit.py").resolve()
-spec = importlib.util.spec_from_file_location("wiredash_api_audit", source)
-audit = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(audit)
+sys.path.insert(0, str(Path("src").resolve()))
+from modules import ApiRequestAudit as audit
 
 
 class ApiAuditTests(unittest.TestCase):

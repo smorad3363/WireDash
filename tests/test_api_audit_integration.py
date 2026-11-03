@@ -1,6 +1,6 @@
 """Flask + SQLite request/response audit test in a disposable environment."""
-import importlib.util
 import json
+import sys
 from pathlib import Path
 import tempfile
 import types
@@ -11,10 +11,8 @@ import sqlalchemy as db
 from flask import Flask
 
 
-spec = importlib.util.spec_from_file_location(
-    "ApiRequestAudit", Path("src/modules/ApiRequestAudit.py"))
-audit = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(audit)
+sys.path.insert(0, str(Path("src").resolve()))
+from modules import ApiRequestAudit as audit
 
 
 class Integration(unittest.TestCase):
