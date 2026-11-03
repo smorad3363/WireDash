@@ -5,7 +5,7 @@
 
 # Pull the current golang-alpine image.
 FROM golang:1.26-alpine3.23 AS awg-go
-ARG AMNEZIA_GO_SHA=2ac739347721a985001d71f49fb36d6fcdebe6f9
+ARG AMNEZIA_GO_SHA=3cfb11465b7ad7484b8fd6ff69a7f78043f6c343
 
 # Install build-dependencies.
 RUN apk add --no-cache \
