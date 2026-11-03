@@ -1,7 +1,7 @@
 """Opt-in, bounded API diagnostics for external WireDash clients.
 
-Logs request metadata and selected peer limit fields, never request bodies,
-credentials, WireGuard keys, cookies, or response payloads.
+Logs detailed redacted API request/response bodies and account policy changes.
+Private keys, credentials and oversized/binary payloads are never recorded.
 """
 import datetime as dt
 import fcntl
@@ -14,6 +14,7 @@ import time
 import uuid
 
 from flask import g, request, session
+from .ApiBodyCapture import capture_query, capture_request, capture_response
 
 LOG_DIR = Path("/data/api-audit")
 LOG_FILE = LOG_DIR / "requests.jsonl"
@@ -269,20 +270,12 @@ def register_api_audit(app, app_prefix, configurations, jobs):
         is_mutation = request.method in ("POST", "PUT", "PATCH", "DELETE")
         safe_body = None
         body = None
-        if (is_mutation and request.content_length is not None
-                and request.content_length <= MAX_BODY
-                and request.is_json and not path.endswith("/api/authenticate")):
-            body = request.get_json(silent=True)
-            safe_body = safe_payload(body)
+        if is_mutation and not any(s in path for s in
+                                   ("/api/authenticate", "/api/newDashboardAPIKey")):
+            safe_body, body = capture_request(request)
         elif is_mutation:
-            safe_body = {
-                "content_type": clean(request.mimetype, 80),
-                "body_bytes": request.content_length,
-                "field_names": sorted(request.form.keys())[:30]
-                if (request.mimetype == "application/x-www-form-urlencoded"
-                    and request.content_length is not None
-                    and request.content_length <= MAX_BODY) else [],
-            }
+            safe_body = {"capture": "sensitive_endpoint_omitted",
+                         "body_bytes": request.content_length}
         key = request.headers.get("wg-dashboard-apikey")
         event = {
             "utc": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
@@ -290,6 +283,15 @@ def register_api_audit(app, app_prefix, configurations, jobs):
             "method": request.method,
             "path": path,
             "query_fields": sorted(request.args.keys())[:30],
+            "query": capture_query(request.args),
+            "content_type": clean(request.mimetype, 100),
+            "content_length": request.content_length,
+            "headers": {
+                "content_type": clean(request.headers.get("Content-Type"), 120),
+                "origin": clean(request.headers.get("Origin"), 150),
+                "x_forwarded_for": clean(request.headers.get("X-Forwarded-For"), 160),
+                "x_request_id": clean(request.headers.get("X-Request-ID"), 120),
+            },
             "remote_ip": clean(request.remote_addr, 80),
             "auth_type": "api_key" if key else ("session" if session.get("username") else "none"),
             "api_key_ref": hashlib.sha256(key.encode()).hexdigest()[:12] if key else None,
@@ -311,11 +313,12 @@ def register_api_audit(app, app_prefix, configurations, jobs):
             return response
         event["http_status"] = response.status_code
         event["duration_ms"] = round((time.monotonic() - g._audit_started) * 1000, 2)
-        response_bytes = response.calculate_content_length()
-        if response.is_json and response_bytes is not None and response_bytes <= 16384:
-            data = response.get_json(silent=True)
-            if isinstance(data, dict):
-                event["api_status"] = data.get("status") if type(data.get("status")) is bool else None
+        event["response"] = capture_response(
+            response, request.method in ("POST", "PUT", "PATCH", "DELETE"), event["path"]
+        )
+        data = event["response"].get("body")
+        if isinstance(data, dict):
+            event["api_status"] = data.get("status") if type(data.get("status")) is bool else None
         target = getattr(g, "_audit_target", None)
         if target:
             event["after"] = snapshot(target[0], target[1], configurations, jobs)
