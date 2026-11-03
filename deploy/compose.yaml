@@ -9,6 +9,8 @@ services:
       # Persistent wg0.conf MTU is applied before WireGuard autostarts.
       wg_default_mtu: "${WGD_WG_MTU:-}"
       wg_autostart: "wg0"
+      # Enable temporarily on a specific VPS with WGD_API_AUDIT=1 in .env.
+      WGD_API_AUDIT: "${WGD_API_AUDIT:-0}"
     ports:
       - "${WGD_PANEL_BIND:-0.0.0.0}:${WGD_PORT:-10086}:${WGD_PORT:-10086}/tcp"
       - "51820:51820/udp"

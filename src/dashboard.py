@@ -231,6 +231,11 @@ _, WG_CONF_PATH = DashboardConfig.GetConfig("Server", "wg_conf_path")
 API Routes
 '''
 
+# Opt-in safe API diagnostics. Register before authentication so even 401
+# responses are visible without recording secrets or request bodies.
+from modules.ApiRequestAudit import register_api_audit
+register_api_audit(app, APP_PREFIX, WireguardConfigurations, AllPeerJobs)
+
 @app.before_request
 def auth_req():
     if request.method.lower() == 'options':
@@ -244,7 +249,7 @@ def auth_req():
         apiKeyEnabled = DashboardConfig.GetConfig("Server", "dashboard_api_key")[1]
         if apiKey is not None and len(apiKey) > 0 and apiKeyEnabled:
             apiKeyExist = len(list(filter(lambda x : x.Key == apiKey, DashboardConfig.DashboardAPIKeys))) == 1
-            DashboardLogger.log(str(request.url), str(request.remote_addr), Message=f"API Key Access: {('true' if apiKeyExist else 'false')} - Key: {apiKey}")
+            DashboardLogger.log(str(request.path), str(request.remote_addr), Message=f"API Key Access: {('true' if apiKeyExist else 'false')} - Key: [redacted]")
             if not apiKeyExist:
                 DashboardConfig.APIAccessed = False
                 response = Flask.make_response(app, {
