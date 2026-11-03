@@ -342,7 +342,7 @@ backup() {
   if ! flock -n 9; then log 'A backup is already in progress; no concurrent run.'; return 0; fi
   # Preflight retention runs even if a previous Telegram delivery failed.
   # Older undelivered automatic archives cannot exhaust the VPS disk.
-  python3 /usr/local/libexec/wgdashbackup_retention.py "$OUT" ||
+  python3 /usr/local/libexec/wgdashbackup_retention.py "$OUT" --preflight ||
     { fail 'Backup retention failed; refusing a new disk-heavy snapshot.'; return 1; }
   local free_bytes source_bytes required_bytes total_bytes
   free_bytes=$(df -B1 --output=avail "$OUT" | tail -1 | tr -d ' ')

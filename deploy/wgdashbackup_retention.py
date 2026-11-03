@@ -11,6 +11,10 @@ from pathlib import Path
 import re
 import shutil
 import sys
+import time
+
+WORKING = re.compile(r"^\.working\.[A-Za-z0-9]{8}$")
+WORKING_STALE_SECONDS = 3600
 
 AUTO = re.compile(r"^wgdashboard-(\d{8})-(\d{6})\.tar\.gz$")
 MAX_DAILY = 7
@@ -49,6 +53,11 @@ def retention_plan(folder):
             unsent.append((path, local))
     sent.sort(key=lambda record: record[1], reverse=True)
     unsent.sort(key=lambda record: record[1], reverse=True)
+    all_unsent = unsent[:]
+    # Once a more recent backup is delivered and catalogued, an older failed
+    # upload is no longer the latest recovery point and must not accumulate.
+    if sent:
+        unsent = [(path, stamp) for path, stamp in unsent if stamp > sent[0][1]]
     daily = {}
     for path, local in sent:
         if local.hour == 12:
@@ -84,22 +93,35 @@ def retention_plan(folder):
                 break
             keep.remove(path)
             used -= path.stat().st_size
-    return sorted((p for p, _ in sent + unsent if p not in keep), key=lambda p: p.name)
+    return sorted((p for p, _ in sent + all_unsent if p not in keep), key=lambda p: p.name)
 
 
-def prune(folder):
+def prune(folder, preflight=False):
     removed = 0
-    for archive in retention_plan(folder):
+    root = Path(folder)
+    for archive in retention_plan(root):
         if not AUTO.fullmatch(archive.name) or archive.is_symlink() or not archive.is_file():
             continue
         for path in (archive, Path(str(archive) + ".sha256"), Path(str(archive) + ".sent")):
             if path.is_file() and not path.is_symlink():
                 path.unlink()
         removed += 1
+    # Only called before a new job starts, under the backup lock. Never
+    # remove a live .working directory at the end of a long backup.
+    if preflight:
+        cutoff = time.time() - WORKING_STALE_SECONDS
+        for path in root.iterdir():
+            if (WORKING.fullmatch(path.name) and path.is_dir()
+                    and not path.is_symlink() and path.stat().st_mtime < cutoff):
+                shutil.rmtree(path)
+                removed += 1
     return removed
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2 or sys.argv[1] != "/var/backups/wgdashboard":
-        raise SystemExit("Usage: retention.py /var/backups/wgdashboard")
-    print("Removed expired automatic local backups:", prune(sys.argv[1]))
+    if len(sys.argv) not in (2, 3) or sys.argv[1] != "/var/backups/wgdashboard":
+        raise SystemExit("Usage: retention.py /var/backups/wgdashboard [--preflight]")
+    if len(sys.argv) == 3 and sys.argv[2] != "--preflight":
+        raise SystemExit("Only --preflight is supported")
+    print("Removed expired automatic local backups:", prune(
+        sys.argv[1], preflight=len(sys.argv) == 3))
