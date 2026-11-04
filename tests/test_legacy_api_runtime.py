@@ -35,7 +35,10 @@ with tempfile.TemporaryDirectory() as tmp:
     app.json = Provider(app)
     def response(status=True, message=None, data=None, status_code=200):
         return app.make_response((dict(status=status, message=message, data=data), status_code))
-    source = ast.parse(pathlib.Path('src/dashboard.py').read_text())
+    source_path = pathlib.Path('src/dashboard.py')
+    if not source_path.is_file():
+        source_path = pathlib.Path('dashboard.py')
+    source = ast.parse(source_path.read_text())
     wanted = {'API_getConfigurationInfo', 'API_savePeerScheduleJob'}
     nodes = [n for n in source.body if isinstance(n, ast.FunctionDef) and n.name in wanted]
     from flask import request
@@ -66,3 +69,4 @@ with tempfile.TemporaryDirectory() as tmp:
     assert jobs.Jobs == [] and peer.jobs == []
     assert len(jobs.getAllJobs(cfg.Name)) == 2
 print('PASS: real Flask JSON, SQLite create/update/retry/delete/cleanup; expired ID behavior preserved')
+
