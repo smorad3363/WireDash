@@ -34,6 +34,8 @@ class FakeConfig:
         self.peers = [FakePeer(i) for i in range(count)]
         self.restricted = []
         self.configurationInfo = SimpleNamespace(PeerGroups={})
+    def toJson(self):
+        return {"Name": "wg-test", "TotalPeers": len(self.peers)}
     def getPeersList(self): return self.peers
     def getRestrictedPeersList(self): return self.restricted
 
@@ -45,6 +47,8 @@ class Contract(unittest.TestCase):
         self.assertEqual(set(original), {"configurationInfo", "configurationPeers", "configurationRestrictedPeers"})
         self.assertEqual(len(original["configurationPeers"]), 5000)
         self.assertEqual(len(original["configurationRestrictedPeers"]), 0)
+        self.assertTrue(all(p["configuration"] == original["configurationInfo"]
+                            for p in original["configurationPeers"]))
 
     def test_pagination_search_and_sort(self):
         cfg = FakeConfig()

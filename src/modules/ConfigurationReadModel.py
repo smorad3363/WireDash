@@ -3,18 +3,21 @@
 This function does not fetch peers, change interfaces, or write to databases.
 """
 def configuration_info_payload(configuration):
+    active_peers = list(configuration.getPeersList())
+    restricted_peers = list(configuration.getRestrictedPeersList())
+    configuration_snapshot = configuration.toJson()
+
+    def serialize_peer(peer):
+        payload = peer.toJson().copy()
+        payload["configuration"] = configuration_snapshot
+        return payload
+
     return {
-        "configurationInfo": configuration,
-        # A peer holds a back-reference to its parent configuration. Sending
-        # that once per peer is expensive and also leaks server metadata.
-        "configurationPeers": [
-            {k: v for k, v in peer.toJson().items() if k != "configuration"}
-            for peer in configuration.getPeersList()
-        ],
+        "configurationInfo": configuration_snapshot,
+        "configurationPeers": [serialize_peer(peer) for peer in active_peers],
         "configurationRestrictedPeers": [
-            {k: v for k, v in peer.toJson().items() if k != "configuration"}
-            for peer in configuration.getRestrictedPeersList()
-        ]
+            serialize_peer(peer) for peer in restricted_peers
+        ],
     }
 
 

@@ -62,7 +62,7 @@ class Peer:
         # Link writes refresh associations; expired links should not linger.
         if self.ShareLink:
             now = datetime.datetime.now()
-            self.ShareLink = [link for link in self.ShareLink if link.ExpireDate > now]
+            self.ShareLink = [link for link in self.ShareLink if link.ExpireDate is None or link.ExpireDate > now]
 
     def metered_usage(self):
         return self.configuration.AllPeerJobs.metered_for(

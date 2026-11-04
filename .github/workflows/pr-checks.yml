@@ -39,6 +39,8 @@ jobs:
         run: python3 tests/test_peer_limits.py
       - name: Polling and peer reuse regression tests
         run: python3 tests/test_performance.py
+      - name: Legacy parent JSON and cached job/link associations
+        run: python3 tests/test_legacy_api_cache.py --repo .
       - name: Legacy bot API and UI-only paging contract
         run: python3 tests/test_ui_pagination.py
       - name: Persistent WireGuard MTU on GRE installs
@@ -86,6 +88,15 @@ jobs:
             -w /opt/wgdashboard/src \
             --entrypoint /opt/wgdashboard/src/venv/bin/python3 wiredash:pr-check \
             /tests/test_restricted_deletion_runtime.py
+      - name: Legacy JSON and SQLite job lifecycle regression
+        run: |
+          docker run --rm --network none --read-only \
+            --tmpfs /tmp:rw,nosuid,nodev,size=64m \
+            -v "$PWD/tests:/tests:ro" \
+            -e PYTHONPATH=/opt/wgdashboard/src \
+            -w /opt/wgdashboard/src \
+            --entrypoint /opt/wgdashboard/src/venv/bin/python3 wiredash:pr-check \
+            /tests/test_legacy_api_runtime.py
       - name: Live sampling and peer reuse unit tests (in container)
         run: |
           docker run --rm -v "$PWD/tests:/tests:ro" -e PYTHONPATH=/opt/wgdashboard/src -w /opt/wgdashboard/src \
