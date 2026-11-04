@@ -76,7 +76,7 @@ class Integration(unittest.TestCase):
                 logs = (root / "audit" / "requests.jsonl").read_text()
                 self.assertNotIn("SECRET_API_BODY", logs)
                 self.assertNotIn("SECRET_API_TOKEN", logs)
-                self.assertNotIn("SENSITIVE_PUBLIC_PEER_KEY", logs)
+                # Public peer identifiers must be visible to compare exact bot calls.\n                self.assertIn("SENSITIVE_PUBLIC_PEER_KEY", logs)
                 self.assertNotIn('"private_key": "SECRET"', logs)
                 event = json.loads(logs.strip())
                 self.assertEqual(event["before"][0]["state"], "restricted")
