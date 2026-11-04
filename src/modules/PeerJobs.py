@@ -388,6 +388,7 @@ class PeerJobs:
     def runJob(self):
         self.cleanJob()
         needToDelete = []
+        restricted_by_configuration = {}
         self.__getJobs()
         for job in self.Jobs:
             c = self.WireguardConfigurations.get(job.Configuration)
@@ -445,6 +446,14 @@ class PeerJobs:
                                           f"Peer {fp.id} from {c.Name} failed {job.Action}ed."
                                           )
                 else:
+                    # Restricted peers still own their policies. Suspend their
+                    # jobs until access is restored; they are not orphaned.
+                    if job.Configuration not in restricted_by_configuration:
+                        restricted_by_configuration[job.Configuration] = {
+                            peer.id for peer in c.getRestrictedPeersList()
+                        }
+                    if job.Peer in restricted_by_configuration[job.Configuration]:
+                        continue
                     self.JobLogger.log(job.JobID, False,
                                   f"Somehow can't find this peer {job.Peer} from {c.Name} failed {job.Action}ed."
                                   )
@@ -459,15 +468,21 @@ class PeerJobs:
         failingJobs = self.JobLogger.getFailingJobs()
         with self.engine.begin() as conn:
             for job in failingJobs:
-                conn.execute(
+                # A failing time policy must never silently become unlimited.
+                # This also protects startup, before configurations are loaded.
+                changed = conn.execute(
                     self.peerJobTable.update().values(
                         {
                             "ExpireDate": datetime.now()
                         }
-                    ).where(self.peerJobTable.columns.JobID == job.get('JobID'))
-                )
-                self.JobLogger.deleteLogs(JobID=job.get('JobID'))
-                self.JobLogger.log(job.get('JobID'), Message=f"Job is removed due to being stale.")
+                    ).where(
+                        self.peerJobTable.columns.JobID == job.get('JobID'),
+                        self.peerJobTable.columns.Field != "date",
+                    )
+                ).rowcount
+                if changed:
+                    self.JobLogger.deleteLogs(JobID=job.get('JobID'))
+                    self.JobLogger.log(job.get('JobID'), Message=f"Job is removed due to being stale.")
         
         with self.engine.connect() as conn:
             if init and conn.dialect.name == 'sqlite':
