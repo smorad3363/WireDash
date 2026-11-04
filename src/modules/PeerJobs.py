@@ -163,15 +163,31 @@ class PeerJobs:
         self.ledger.forget(configuration, peers)
 
     def __getJobs(self):
-        self.Jobs.clear()
         with self.engine.connect() as conn:
-            jobs = conn.execute(self.peerJobTable.select().where(
+            rows = conn.execute(self.peerJobTable.select().where(
                 self.peerJobTable.columns.ExpireDate.is_(None)
             )).mappings().fetchall()
-            for job in jobs:
-                self.Jobs.append(PeerJob(
-                    job['JobID'], job['Configuration'], job['Peer'], job['Field'], job['Operator'], job['Value'],
-                    job['CreationDate'], job['ExpireDate'], job['Action']))
+
+        fresh_jobs = []
+        jobs_by_peer = {}
+        for row in rows:
+            job = PeerJob(
+                row['JobID'], row['Configuration'], row['Peer'],
+                row['Field'], row['Operator'], row['Value'],
+                row['CreationDate'], row['ExpireDate'], row['Action'])
+            fresh_jobs.append(job)
+            jobs_by_peer.setdefault((job.Configuration, job.Peer), []).append(job)
+
+        self.Jobs = fresh_jobs
+        configurations = getattr(self, "WireguardConfigurations", {})
+        for configuration in tuple(configurations.values()):
+            for peers in (
+                getattr(configuration, "Peers", ()),
+                getattr(configuration, "RestrictedPeers", ()),
+            ):
+                for peer in peers:
+                    peer.jobs = list(jobs_by_peer.get(
+                        (configuration.Name, peer.id), ()))
 
     def getAllJobs(self, configuration: str = None):
         if configuration is not None:

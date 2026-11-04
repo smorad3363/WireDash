@@ -43,7 +43,7 @@ class PeerShareLinks:
         now = datetime.now()
         # Expired links must not remain visible even if no subsequent write refreshed cache.
         return [x for x in self.Links if x.Configuration == Configuration
-                and x.Peer == Peer and x.ExpireDate > now]
+                and x.Peer == Peer and (x.ExpireDate is None or x.ExpireDate > now)]
 
     def getLinkByID(self, ShareID: str) -> list[PeerShareLink]:
         self.__getSharedLinks()
