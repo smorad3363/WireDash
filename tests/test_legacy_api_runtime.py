@@ -66,6 +66,8 @@ with tempfile.TemporaryDirectory() as tmp:
     logger.getFailingJobs.return_value = [{'JobID':job.JobID}]
     jobs.cleanJob()
     jobs._PeerJobs__getJobs()
+    assert len(jobs.Jobs) == 1 and len(peer.jobs) == 1
+    assert jobs.deleteJob(job)[0]
     assert jobs.Jobs == [] and peer.jobs == []
     assert len(jobs.getAllJobs(cfg.Name)) == 2
 print('PASS: real Flask JSON, SQLite create/update/retry/delete/cleanup; expired ID behavior preserved')

@@ -151,7 +151,7 @@ class RepairProbes(unittest.TestCase):
         state = {"expired": False}
         rows = []
         for jid, cfg in (("stale", "wg0"), ("keep", "wg1")):
-            rows.append(dict(JobID=jid, Configuration=cfg, Peer="FAKE", Field="date", Operator="lgt", Value="2099-01-01 00:00:00", CreationDate=dt.datetime(2026, 1, 1), ExpireDate=None, Action="restrict"))
+            rows.append(dict(JobID=jid, Configuration=cfg, Peer="FAKE", Field="total_data", Operator="lgt", Value="100", CreationDate=dt.datetime(2026, 1, 1), ExpireDate=None, Action="restrict"))
         def execute(stmt):
             if stmt is sentinel.expire:
                 state["expired"] = True

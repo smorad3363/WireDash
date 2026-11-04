@@ -97,6 +97,15 @@ jobs:
             -w /opt/wgdashboard/src \
             --entrypoint /opt/wgdashboard/src/venv/bin/python3 wiredash:pr-check \
             /tests/test_legacy_api_runtime.py
+      - name: Retain restricted peer time policies and enforce real deadlines
+        run: |
+          docker run --rm --network none --read-only \
+            --tmpfs /tmp:rw,nosuid,nodev,size=64m \
+            -v "$PWD/tests:/tests:ro" \
+            -e PYTHONPATH=/opt/wgdashboard/src \
+            -w /opt/wgdashboard/src \
+            --entrypoint /opt/wgdashboard/src/venv/bin/python3 wiredash:pr-check \
+            /tests/test_time_policy_retention_runtime.py
       - name: Live sampling and peer reuse unit tests (in container)
         run: |
           docker run --rm -v "$PWD/tests:/tests:ro" -e PYTHONPATH=/opt/wgdashboard/src -w /opt/wgdashboard/src \
