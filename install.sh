@@ -397,6 +397,30 @@ if "wg_default_mtu:" not in section:
     p.write_text(text)
 PY
 fi
+# Ensure logs remain bounded on fresh installs and managed upgrades.
+# This runs before container recreation so an existing deployment remains safe on failure.
+if ! command -v logrotate >/dev/null || ! command -v cron >/dev/null; then
+  apt-get update
+  DEBIAN_FRONTEND=noninteractive apt-get install -y logrotate cron
+fi
+install -d -m 0755 /var/log/wiredash-app
+cat > /etc/logrotate.d/wiredash-app <<'LOGROTATE'
+/var/log/wiredash-app/*.log {
+    size 10M
+    rotate 4
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+    su root root
+}
+LOGROTATE
+cat > /etc/cron.d/wiredash-app-logs <<'CRON'
+* * * * * root /usr/sbin/logrotate -s /var/lib/logrotate/wiredash-app.state /etc/logrotate.d/wiredash-app >/dev/null 2>&1
+CRON
+chmod 0644 /etc/logrotate.d/wiredash-app /etc/cron.d/wiredash-app-logs
+systemctl enable --now cron >/dev/null
 # Mount a restricted Unix control socket into the panel, never the Docker
 # socket or any host backup directory. Existing Compose layouts are preserved.
 install -d -m 0700 /run/wgdashbackup-panel /var/lib/wgdashbackup-import
@@ -406,6 +430,7 @@ p=pathlib.Path(sys.argv[1]); s=p.read_text()
 mounts=[
     "      - /run/wgdashbackup-panel:/run/wgdashbackup-panel:ro",
     "      - /var/lib/wgdashbackup-import:/var/lib/wgdashbackup-import:rw",
+    "      - /var/log/wiredash-app:/opt/wgdashboard/src/log:rw",
 ]
 # This supports both the standard WireDash layout and explicitly migrated
 # existing deployments with nonstandard named volumes.
@@ -430,6 +455,21 @@ then
   [[ -z "$old_compose" ]] || cp -a "$old_compose" "$COMPOSE"
   die 'Cannot add restricted backup socket mount; original Compose restored'
 fi
+# Preserve existing managed Compose files, but add bounded JSON logging when absent.
+# Never override an administrator's explicitly configured logging driver.
+python3 - "$COMPOSE" <<'PYLOG'
+import pathlib,re,sys
+p=pathlib.Path(sys.argv[1]); s=p.read_text()
+service=re.search(r"(?m)^  wgdashboard:[ \t]*$",s)
+if not service:
+    raise SystemExit("Cannot find wgdashboard service while configuring log retention")
+next_service=re.search(r"(?m)^  [A-Za-z0-9_-]+:[ \t]*$",s[service.end():])
+end=service.end()+next_service.start() if next_service else len(s)
+section=s[service.end():end]
+if not re.search(r"(?m)^    logging:[ \t]*$",section):
+    s=s[:service.end()]+'\n    logging:\n      driver: json-file\n      options:\n        max-size: "10m"\n        max-file: "3"'+s[service.end():]
+    p.write_text(s)
+PYLOG
 step 6 'deploy image and verify running HTTP API'
 # On failure, preserve the original environment settings along with Compose.
 restore_saved_env() {

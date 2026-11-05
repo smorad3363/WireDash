@@ -108,7 +108,7 @@ def peerInformationBackgroundThread():
                                         c.logPeersHistoryEndpoint()
                             c.getRestrictedPeersList()
             except Exception as e:
-                app.logger.error(f"[WGDashboard] Background Thread #1 Error", e)
+                app.logger.exception("[WGDashboard] Background Thread #1 Error")
 
         if delay == 6:
             delay = 1
@@ -125,8 +125,10 @@ def peerJobScheduleBackgroundThread():
             try:
                 AllPeerJobs.runJob()
                 time.sleep(180)
-            except Exception as e:
-                app.logger.error("Background Thread #2 Error", e)
+            except Exception:
+                # Back off after any error so a broken JobLog database cannot flood logs.
+                app.logger.exception("Background Thread #2 Error")
+                time.sleep(60)
 
 def gunicornConfig():
     _, app_ip = DashboardConfig.GetConfig("Server", "app_ip")

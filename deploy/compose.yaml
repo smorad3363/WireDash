@@ -3,6 +3,11 @@ services:
     image: ghcr.io/smorad3363/wiredash:__WIREDASH_TAG__
     restart: unless-stopped
     container_name: wgdashboard
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       wgd_port: "${WGD_PORT:-10086}"
       tz: "${WGD_TZ:-Europe/Istanbul}"
@@ -18,6 +23,8 @@ services:
       - aconf:/etc/amnezia/amneziawg
       - conf:/etc/wireguard
       - data:/data
+      # Host logrotate bounds Gunicorn log files independently of Docker logs.
+      - /var/log/wiredash-app:/opt/wgdashboard/src/log:rw
       # Restricted host backup command socket. No Docker/host-root mounts.
       - /run/wgdashbackup-panel:/run/wgdashbackup-panel:ro
       # Isolated upload staging only; never mount /root or backup archives.
