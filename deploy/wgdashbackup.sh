@@ -286,12 +286,44 @@ for p in ("/data","/etc/wireguard","/etc/amnezia/amneziawg"):
   [[ -f "$DATA/wg-dashboard.ini" ]] || fail 'Panel config missing from /data.'
 }
 fingerprint() {
+  # Audit JSONL is append-only operational history, not configuration.
+  # It changes on every bot/API request and must not invalidate a live backup.
   {
-    find "$DATA" -path "$DATA/db" -prune -o -type f -print0
+    find "$DATA" \( -path "$DATA/db" -o -path "$DATA/api-audit" \) -prune -o -type f -print0
     find "$WG" "$AWG" -type f -print0
     printf '%s\0' "$COMPOSE"
     [[ ! -f /opt/wgdashboard/.env ]] || printf '%s\0' /opt/wgdashboard/.env
   } | sort -z | xargs -0 -r sha256sum | sha256sum | cut -d' ' -f1
+}
+capture_live_files() {
+  local stage=$1 attempt before after
+  # Check immutable config only across its actual copy, not while SQLite
+  # snapshots are taken. Live peers and their configuration can legitimately
+  # change seconds later without making the captured files invalid.
+  for attempt in 1 2 3; do
+    before=$(fingerprint)
+    # Clear a failed attempt so deleted config files cannot survive a retry.
+    find "$stage/data" -mindepth 1 -maxdepth 1 ! -name db -exec rm -rf -- {} +
+    find "$stage/etc/wireguard" "$stage/etc/amnezia/amneziawg" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+    tar -C "$DATA" --exclude='./db' --exclude='./api-audit' -cf - . | tar -C "$stage/data" -xf -
+    cp -a "$WG/." "$stage/etc/wireguard/"
+    cp -a "$AWG/." "$stage/etc/amnezia/amneziawg/"
+    cp -L --preserve=mode,ownership,timestamps "$COMPOSE" "$stage/compose.yaml"
+    [[ ! -f /opt/wgdashboard/.env ]] || cp -L --preserve=mode,ownership,timestamps /opt/wgdashboard/.env "$stage/.env"
+    after=$(fingerprint)
+    if [[ "$before" == "$after" ]]; then
+      # Retain API audit history in the archive, but a growing/rotating log is
+      # a best-effort snapshot and not a reason to lose the VPN backup.
+      if [[ -d "$DATA/api-audit" ]]; then
+        mkdir -p "$stage/data/api-audit"
+        cp -a "$DATA/api-audit/." "$stage/data/api-audit/" ||
+          log 'WARN: an API audit log rotated during snapshot; remaining logs preserved.'
+      fi
+      return 0
+    fi
+    log "WARN: Live configuration changed during copy (attempt $attempt/3); capturing again."
+  done
+  fail 'Configuration changed during all 3 short copy attempts; no inconsistent backup sent.'
 }
 online_sqlite() {
   python3 - "$DATA" "$1" <<'PY'
@@ -335,7 +367,7 @@ print('SQLite snapshots checked:',len(dbs))
 PY
 }
 backup() {
-  local tmp stage before after name archive sha response part i total size
+  local tmp stage name archive sha response part i total size
   local -a parts=() old=()
   ensure_dirs; need_install; load_telegram
   exec 9>/run/wgdashbackup.lock
@@ -391,15 +423,8 @@ backup() {
   stage=$tmp/snapshot
   mkdir -p "$stage/data/db" "$stage/etc/wireguard" "$stage/etc/amnezia/amneziawg"
   log 'Starting ONLINE backup (no Docker stop/restart).'
-  before=$(fingerprint)
-  tar -C "$DATA" --exclude='./db' -cf - . | tar -C "$stage/data" -xf -
-  cp -a "$WG/." "$stage/etc/wireguard/"
-  cp -a "$AWG/." "$stage/etc/amnezia/amneziawg/"
-  cp -L --preserve=mode,ownership,timestamps "$COMPOSE" "$stage/compose.yaml"
-  [[ ! -f /opt/wgdashboard/.env ]] || cp -L --preserve=mode,ownership,timestamps /opt/wgdashboard/.env "$stage/.env"
+  capture_live_files "$stage"
   online_sqlite "$stage/data/db"
-  after=$(fingerprint)
-  [[ "$before" == "$after" ]] || fail 'Configuration changed during capture. No backup sent; retry manually or on the next timer.'
   printf 'UTC=%s\nImage=%s\n' "$(date -u +%FT%TZ)" "$(docker inspect -f '{{.Config.Image}}' "$CONTAINER")" > "$stage/manifest.txt"
   name="wgdashboard-$(date -u +%Y%m%d-%H%M%S).tar.gz"
   archive=$tmp/$name
