@@ -1,11 +1,19 @@
-import dashboard
+import configparser
 import os
 from datetime import datetime
 global sqldb, cursor, DashboardConfig, WireguardConfigurations, AllPeerJobs, JobLogger, Dash
-app_host, app_port = dashboard.gunicornConfig()
+
+# Do not import dashboard in the Gunicorn master before forking workers:
+# dashboard initializes SQLite connections, and inherited WAL handles can
+# cause stale database reads and "database disk image is malformed" errors.
+ini_config = configparser.RawConfigParser()
+ini_config.read(['/data/wg-dashboard.ini', './wg-dashboard.ini'])
+app_host = ini_config.get('Server', 'app_ip', fallback='0.0.0.0').strip() or '0.0.0.0'
+app_port = ini_config.getint('Server', 'app_port', fallback=10086)
 date = datetime.today().strftime('%Y_%m_%d_%H_%M_%S')
 
 def post_worker_init(worker):
+    import dashboard
     dashboard.startThreads()
     dashboard.DashboardPlugins.startThreads()
 
