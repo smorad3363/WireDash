@@ -525,6 +525,17 @@ assert re.search(r"(?mi)^\s*MTU\s*=\s*"+re.escape(sys.argv[1])+r"\s*$",interface
     log "Verified wg0 live MTU=$WG_MTU and persistent /etc/wireguard/wg0.conf"
   fi
 fi
+# Docker Compose can recreate published-port NAT rules on upgrades. When GRE
+# Manager is present, refresh only its owned WireGuard UDP/51820 path.
+# Keep this optional: WireDash also runs on servers without GRE Manager.
+if command -v gremgr-pair >/dev/null 2>&1 && [[ -d /etc/gremgr/pairs ]]; then
+  if gremgr-pair docker-sync-all; then
+    log 'GRE-to-Docker WireGuard UDP routing checked'
+  else
+    log 'WARNING: GRE route refresh failed; inspect gremgr-docker-sync.timer'
+  fi
+fi
+
 step 7 'install backup integration'
 if ((MIGRATE)) && [[ "$COMPOSE" != "$DEST/compose.yaml" ]] && [[ ! -e "$DEST/compose.yaml" ]]; then
   ln -s "$COMPOSE" "$DEST/compose.yaml"
