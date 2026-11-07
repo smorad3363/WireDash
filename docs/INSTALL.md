@@ -43,6 +43,28 @@ docker exec wgdashboard sh -c 'grep -iE "^[[:space:]]*MTU[[:space:]]*=" /etc/wir
 
 Expected: `mtu 1280` on the interface and `MTU = 1280` in the persisted config. For GRE paths with additional encapsulation overhead, 1280 reduces fragmentation without changing the server's existing peer keys. It does not automatically change MTU within existing client configuration files. If `wg0` cannot start (for example, insufficient kernel capabilities), the installer reports a failed live-MTU check instead of claiming success.
 
+## WireDash behind GRE Manager
+
+On a Foreign GRE endpoint that receives users through a GRE pair, Docker's
+published UDP/51820 port needs a dedicated GRE-to-Docker NAT rule. GRE Manager
+0.2.1+ handles this automatically and rechecks the rule after Docker restarts.
+During a managed WireDash upgrade, the installer also asks GRE Manager to
+refresh its rule once the updated container is healthy. This changes only GRE
+UDP/51820 routing; neither the panel nor Docker modifies the GRE tunnel MTU.
+
+The GRE tunnel's MTU and WireGuard `wg0` MTU are **different** settings:
+the fresh WireDash `wg0` default stays 1280, existing settings are preserved,
+and GRE Manager preserves the MTU stored in each pair (1400 default for new
+pairs). Do not automatically reduce an existing healthy 1420 GRE path to 1280.
+
+Check after updating:
+
+```bash
+sudo systemctl is-active gremgr-docker-sync.timer
+sudo iptables -t nat -S PREROUTING | grep docker-wg
+docker exec wgdashboard ip link show wg0
+```
+
 ## GitHub HTTPS / bootstrap failures
 
 Ubuntu 22.04 and Ubuntu 24.04 are supported/tested hosts; WireDash runs in Docker but the bootstrap executes on the host and still needs HTTPS network access. Some VPS networks block `api.github.com:443`. The canonical command no longer calls that API. It needs `raw.githubusercontent.com:443` for version resolution and assets, and `ghcr.io:443` for the preferred image. If the registry is unavailable, local Docker building additionally needs `codeload.github.com:443` and build dependency registries/GitHub. Check host egress with `curl -I --connect-timeout 8 https://raw.githubusercontent.com/` and `curl -I --connect-timeout 8 https://ghcr.io/v2/` (the latter may respond with HTTP 401, showing TLS connectivity). Missing network access cannot be corrected by switching to Ubuntu 24.04.
