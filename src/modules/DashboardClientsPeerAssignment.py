@@ -1,3 +1,4 @@
+from .SafeDatabaseEngine import create_engine as safe_create_engine
 import datetime
 import uuid
 
@@ -32,7 +33,7 @@ class Assignment:
 class DashboardClientsPeerAssignment:
     def __init__(self, wireguardConfigurations: dict[str, WireguardConfiguration]):
         self.logger = DashboardLogger()
-        self.engine = db.create_engine(ConnectionString("wgdashboard"))
+        self.engine = safe_create_engine(ConnectionString("wgdashboard"))
         self.metadata = db.MetaData()
         self.wireguardConfigurations = wireguardConfigurations
         self.dashboardClientsPeerAssignmentTable = db.Table(

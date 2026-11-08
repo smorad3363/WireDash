@@ -1,3 +1,4 @@
+from .SafeDatabaseEngine import create_engine as safe_create_engine
 from .DatabaseConnection import ConnectionString
 from .PeerShareLink import PeerShareLink
 import sqlalchemy as db
@@ -10,7 +11,7 @@ Peer Share Links
 class PeerShareLinks:
     def __init__(self, DashboardConfig, WireguardConfigurations):
         self.Links: list[PeerShareLink] = []
-        self.engine = db.create_engine(ConnectionString("wgdashboard"))
+        self.engine = safe_create_engine(ConnectionString("wgdashboard"))
         self.metadata = db.MetaData()
         self.peerShareLinksTable = db.Table(
             'PeerShareLinks', self.metadata,

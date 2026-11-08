@@ -1,6 +1,8 @@
 """
 Peer Jobs
 """
+from .SafeDatabaseEngine import create_engine as safe_create_engine
+
 import sqlalchemy
 import uuid
 from datetime import timedelta
@@ -17,7 +19,7 @@ from flask import current_app
 class PeerJobs:
     def __init__(self, DashboardConfig, WireguardConfigurations, AllPeerShareLinks):
         self.Jobs: list[PeerJob] = []
-        self.engine = db.create_engine(ConnectionString('wgdashboard_job'))
+        self.engine = safe_create_engine(ConnectionString('wgdashboard_job'))
         self.metadata = db.MetaData()
         self.peerJobTable = db.Table('PeerJobs', self.metadata,
                                      db.Column('JobID', db.String(255), nullable=False, primary_key=True),

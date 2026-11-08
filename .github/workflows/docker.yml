@@ -19,6 +19,8 @@ jobs:
         uses: actions/checkout@v4
       - name: Verify getLink fix
         run: python3 tests/check_patch.py
+      - name: SQLite WAL connection and watchdog regression
+        run: python3 tests/test_sqlite_wal_resilience.py
       - name: Live backup config capture with rotating audit logs
         run: python3 tests/test_backup_live_capture.py
       - name: Log in to GitHub Container Registry

@@ -17,6 +17,8 @@ jobs:
         run: bash -n install.sh deploy/wgdashbackup.sh deploy/wgd-watchdog.sh deploy/legacy/fix-wgdashboard-hang.sh tests/smoke.sh tests/run_synthetic_benchmark.sh
       - name: Python AST test
         run: python3 tests/check_patch.py
+      - name: SQLite WAL connection and watchdog regression
+        run: python3 tests/test_sqlite_wal_resilience.py
       - name: Host backup bridge and panel contract tests
         run: python3 tests/test_backup_panel.py
       - name: Live backup capture race regression

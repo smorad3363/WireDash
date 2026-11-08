@@ -1,6 +1,8 @@
 """
 WireGuard Configuration
 """
+from .SafeDatabaseEngine import create_engine as safe_create_engine
+
 from typing import Any
 
 import jinja2
@@ -70,7 +72,7 @@ class WireguardConfiguration:
         self.AllPeerShareLinks = AllPeerShareLinks
         self.DashboardWebHooks = DashboardWebHooks
         self.configPath = os.path.join(self.__getProtocolPath(), f'{self.Name}.conf')
-        self.engine: sqlalchemy.Engine = sqlalchemy.create_engine(ConnectionString("wgdashboard"))
+        self.engine: sqlalchemy.Engine = safe_create_engine(ConnectionString("wgdashboard"))
         self.metadata: sqlalchemy.MetaData = sqlalchemy.MetaData()
         self.dbType = self.DashboardConfig.GetConfig("Database", "type")[1]
 

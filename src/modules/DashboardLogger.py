@@ -1,6 +1,8 @@
 """
 Dashboard Logger Class
 """
+from .SafeDatabaseEngine import create_engine as safe_create_engine
+
 import uuid
 import sqlalchemy as db
 from flask import current_app
@@ -9,7 +11,7 @@ from .DatabaseConnection import ConnectionString
 
 class DashboardLogger:
     def __init__(self):
-        self.engine = db.create_engine(ConnectionString("wgdashboard_log"))
+        self.engine = safe_create_engine(ConnectionString("wgdashboard_log"))
         self.metadata = db.MetaData()
         self.dashboardLoggerTable = db.Table('DashboardLog', self.metadata,
                                              

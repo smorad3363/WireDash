@@ -1,3 +1,4 @@
+from .SafeDatabaseEngine import create_engine as safe_create_engine
 import uuid
 
 from pydantic import BaseModel, field_serializer
@@ -14,7 +15,7 @@ class NewConfigurationTemplate(BaseModel):
     
 class NewConfigurationTemplates:
     def __init__(self):
-        self.engine = db.create_engine(ConnectionString("wgdashboard"))
+        self.engine = safe_create_engine(ConnectionString("wgdashboard"))
         self.metadata = db.MetaData()
         self.templatesTable = db.Table(
             'NewConfigurationTemplates', self.metadata,

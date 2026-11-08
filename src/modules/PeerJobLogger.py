@@ -1,6 +1,8 @@
 """
 Peer Job Logger
 """
+from .SafeDatabaseEngine import create_engine as safe_create_engine
+
 import uuid
 from typing import Sequence
 
@@ -13,7 +15,7 @@ from .Log import Log
 
 class PeerJobLogger:
     def __init__(self, AllPeerJobs, DashboardConfig):
-        self.engine = db.create_engine(ConnectionString("wgdashboard_log"))                
+        self.engine = safe_create_engine(ConnectionString("wgdashboard_log"))
         self.metadata = db.MetaData()
         self.jobLogTable = db.Table('JobLog', self.metadata,
                                     db.Column('LogID', db.String(255), nullable=False, primary_key=True),

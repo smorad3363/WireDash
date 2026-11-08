@@ -1,3 +1,4 @@
+from .SafeDatabaseEngine import create_engine as safe_create_engine
 import datetime
 import hashlib
 import random
@@ -20,7 +21,7 @@ from flask import session
 class DashboardClients:
     def __init__(self, wireguardConfigurations):
         self.logger = DashboardLogger()
-        self.engine = db.create_engine(ConnectionString("wgdashboard"))
+        self.engine = safe_create_engine(ConnectionString("wgdashboard"))
         self.metadata = db.MetaData()
         self.OIDC = DashboardOIDC("Client")
         

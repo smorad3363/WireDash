@@ -1,3 +1,4 @@
+from .SafeDatabaseEngine import create_engine as safe_create_engine
 import json
 import threading
 import time
@@ -40,7 +41,7 @@ class WebHookSessionLogs(BaseModel):
 
 class DashboardWebHooks:
     def __init__(self, DashboardConfig):
-        self.engine = db.create_engine(ConnectionString("wgdashboard"))
+        self.engine = safe_create_engine(ConnectionString("wgdashboard"))
         self.metadata = db.MetaData()
         self.webHooksTable = db.Table(
             'DashboardWebHooks', self.metadata,
@@ -201,7 +202,7 @@ class DashboardWebHooks:
 
 class WebHookSession:
     def __init__(self, webHook: WebHook, data: dict[str, str]):
-        self.engine = db.create_engine(ConnectionString("wgdashboard"))
+        self.engine = safe_create_engine(ConnectionString("wgdashboard"))
         self.metadata = db.MetaData()
         self.webHookSessionsTable = db.Table('DashboardWebHookSessions', self.metadata, autoload_with=self.engine)
         self.webHook = webHook

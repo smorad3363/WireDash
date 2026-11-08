@@ -7,14 +7,15 @@ PORT=${WGD_PORT:-10086}
 INTERVAL=${WGD_WATCHDOG_INTERVAL:-10}
 TIMEOUT=${WGD_WATCHDOG_TIMEOUT:-5}
 THRESHOLD=${WGD_WATCHDOG_THRESHOLD:-2}
+WAL_CHECK_CYCLES=${WGD_WATCHDOG_WAL_CHECK_CYCLES:-6}
 STATE_DIR=/var/lib/wgd-watchdog
 CFG=/etc/wgdashbackup/telegram.conf
 CONTAINER=wgdashboard
 URL="http://127.0.0.1:${PORT}/api/handshake"
 
 log() { printf '[wgd-watchdog] %s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*"; }
-[[ "$PORT" =~ ^[0-9]+$ && "$INTERVAL" =~ ^[0-9]+$ && "$TIMEOUT" =~ ^[0-9]+$ && "$THRESHOLD" =~ ^[0-9]+$ ]] || { log 'invalid watchdog configuration'; exit 2; }
-(( PORT > 0 && PORT <= 65535 && INTERVAL >= 5 && TIMEOUT >= 1 && THRESHOLD >= 1 )) || exit 2
+[[ "$PORT" =~ ^[0-9]+$ && "$INTERVAL" =~ ^[0-9]+$ && "$TIMEOUT" =~ ^[0-9]+$ && "$THRESHOLD" =~ ^[0-9]+$ && "$WAL_CHECK_CYCLES" =~ ^[0-9]+$ ]] || { log 'invalid watchdog configuration'; exit 2; }
+(( PORT > 0 && PORT <= 65535 && INTERVAL >= 5 && TIMEOUT >= 1 && THRESHOLD >= 1 && WAL_CHECK_CYCLES >= 1 )) || exit 2
 mkdir -p "$STATE_DIR"
 chmod 700 "$STATE_DIR"
 exec 9>"$STATE_DIR/lock"
@@ -24,6 +25,19 @@ probe() {
   local code
   code=$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time "$TIMEOUT" "$URL" 2>/dev/null) || return 1
   [[ "$code" == 200 ]]
+}
+# HTTP 200 cannot prove SQLite health. Find stale WAL file descriptors
+# without touching SQLite or restarting the VPN container.
+stale_wal() {
+  local pid fd target
+  while IFS= read -r pid; do
+    [[ "$pid" =~ ^[0-9]+$ && -d "/proc/$pid/fd" ]] || continue
+    for fd in /proc/"$pid"/fd/*; do
+      target=$(readlink "$fd" 2>/dev/null) || continue
+      [[ "$target" == */db/*.db-wal" (deleted)" ]] && return 0
+    done
+  done < <(docker top "$CONTAINER" -eo pid 2>/dev/null | tail -n +2)
+  return 1
 }
 running() {
   [[ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null || true)" == true ]]
@@ -92,6 +106,7 @@ recover() {
 log "Started: $URL (every ${INTERVAL}s, threshold ${THRESHOLD}; cap 3/30m)"
 failures=0
 was_down=0
+wal_ticks=0
 while true; do
   if ! running; then
     if ((was_down == 0)); then log 'container stopped/missing; Docker restart policy owns recovery'; fi
@@ -100,6 +115,28 @@ while true; do
     continue
   fi
   was_down=0
+  wal_ticks=$((wal_ticks+1))
+  if (( wal_ticks % WAL_CHECK_CYCLES == 0 )) && stale_wal; then
+    log 'Orphaned SQLite WAL found; HTTP probe alone cannot detect database failure.'
+    if cap_allows; then
+      # Reload only application workers; never restart Docker or WireGuard.
+      if docker exec "$CONTAINER" sh -c 'test -s /opt/wgdashboard/src/gunicorn.pid && kill -HUP "$(cat /opt/wgdashboard/src/gunicorn.pid)"'; then
+        sleep 8
+        if stale_wal; then
+          log 'SQLite WAL remains orphaned after Gunicorn reload'
+          alert 'SQLite WAL still orphaned after worker reload'
+        else
+          log 'Orphaned SQLite WAL handles cleared by Gunicorn reload'
+        fi
+      else
+        log 'Failed to signal Gunicorn master for WAL recovery'
+        alert 'SQLite WAL orphan found but Gunicorn signal failed'
+      fi
+    else
+      log 'Recovery limit reached; stale WAL alert only'
+      alert 'SQLite WAL orphan persists; recovery cap reached'
+    fi
+  fi
   if probe; then
     ((failures > 0)) && log 'probe OK after failure'
     failures=0

@@ -1,3 +1,4 @@
+from .SafeDatabaseEngine import create_engine as safe_create_engine
 import datetime
 import hashlib
 import uuid
@@ -8,7 +9,7 @@ from .DatabaseConnection import ConnectionString
 
 class DashboardClientsTOTP:
     def __init__(self):
-        self.engine = db.create_engine(ConnectionString("wgdashboard"))
+        self.engine = safe_create_engine(ConnectionString("wgdashboard"))
         self.metadata = db.MetaData()
         self.dashboardClientsTOTPTable = db.Table(
             'DashboardClientsTOTPTokens', self.metadata,
