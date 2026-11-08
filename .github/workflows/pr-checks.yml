@@ -83,6 +83,15 @@ jobs:
             -w /opt/wgdashboard/src \
             --entrypoint /opt/wgdashboard/src/venv/bin/python3 wiredash:pr-check \
             /tests/test_traffic_ledger_runtime.py
+      - name: Overlapping allowed/restricted peer renew (disposable SQLite)
+        run: |
+          docker run --rm --network none --read-only \
+            --tmpfs /tmp:rw,nosuid,nodev,size=64m \
+            -v "$PWD/tests:/tests:ro" \
+            -e PYTHONPATH=/opt/wgdashboard/src \
+            -w /opt/wgdashboard/src \
+            --entrypoint /opt/wgdashboard/src/venv/bin/python3 wiredash:pr-check \
+            /tests/test_peer_overlap_runtime.py
       - name: Restricted peer bulk deletion (disposable SQLite and mocked WireGuard)
         run: |
           docker run --rm --network none --read-only \

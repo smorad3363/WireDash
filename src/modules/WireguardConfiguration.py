@@ -622,6 +622,16 @@ class WireguardConfiguration:
                 )
                 restrictedPeer = conn.execute(stmt).mappings().fetchone()
                 if restrictedPeer is not None:
+                    # Interrupted renewals may leave a stale restricted copy of
+                    # an already-active peer. Keep the active row authoritative
+                    # instead of trying to insert a duplicate primary key.
+                    if conn.execute(self.peersTable.select().where(
+                        self.peersTable.columns.id == i
+                    )).first() is not None:
+                        conn.execute(self.peersRestrictedTable.delete().where(
+                            self.peersRestrictedTable.columns.id == i
+                        ))
+                        continue
                     conn.execute(
                         self.peersTable.insert().from_select(
                             [c.name for c in self.peersTable.columns],
@@ -673,6 +683,12 @@ class WireguardConfiguration:
                         command = [self.Protocol, "set", self.Name, "peer", pf.id, "remove"]
                         subprocess.check_output(command, stderr=subprocess.STDOUT)
 
+                        # Replace any stale restricted duplicate in the SAME
+                        # transaction, using the current active peer record.
+                        # This keeps quota-reset and subsequent allow idempotent.
+                        conn.execute(self.peersRestrictedTable.delete().where(
+                            self.peersRestrictedTable.columns.id == pf.id
+                        ))
                         conn.execute(
                             self.peersRestrictedTable.insert().from_select(
                                 [c.name for c in self.peersTable.columns],

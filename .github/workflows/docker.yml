@@ -40,8 +40,18 @@ jobs:
           push: true
           tags: |
             ghcr.io/smorad3363/wiredash:sha-${{ github.sha }}
+      - name: Verify stale peer renew recovery in the built image
+        run: |
+          docker run --rm --network none --read-only \
+            --tmpfs /tmp:rw,nosuid,nodev,size=64m \
+            -v "$PWD/tests:/tests:ro" \
+            -e PYTHONPATH=/opt/wgdashboard/src \
+            -w /opt/wgdashboard/src \
+            --entrypoint /opt/wgdashboard/src/venv/bin/python3 \
+            ghcr.io/smorad3363/wiredash:sha-${{ github.sha }} \
+            /tests/test_peer_overlap_runtime.py
       # Do not advertise a new version to the installer until its image is
-      # published. Only main pushes produce the raw-GitHub release pointer.
+      # published AND regression tests pass on that image.
       - name: Promote latest successfully published commit
         if: github.ref == 'refs/heads/main'
         env:
