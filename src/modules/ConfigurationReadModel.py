@@ -96,6 +96,14 @@ def ui_configuration_page(configuration, page=1, per_page=50, query="", sort="cr
     count = len(matches)
     page = min(max(1, int(page)), max(1, (count + per_page - 1) // per_page))
     shown = matches[(page - 1) * per_page:page * per_page]
+    speed_store=getattr(configuration, 'SpeedStore', None)
+    speed=speed_store.summaries([peer.id for peer,_ in shown]) if speed_store else {}
+    controller=getattr(configuration, 'SpeedController', None)
+    if controller:
+        for key,value in speed.items():
+            applied=controller.tc.applied.get(key,{})
+            value['applied_caps']=applied.get('desired',{}).get('caps',{}) if applied.get('complete') else {}
+            value['controller_status']=controller.status
     # The historical usage chart only needs top consumers; never serialize
     # thousands of extra peers simply to render a bar chart.
     top = heapq.nlargest(30, ranked, key=lambda x: (x[0], x[1]))
@@ -105,6 +113,7 @@ def ui_configuration_page(configuration, page=1, per_page=50, query="", sort="cr
             {**{k: v for k, v in peer.toJson().items() if k != "configuration"},
              "restricted": restricted_flag,
              **creation.get(peer.id, {"created_at": None, "creation_basis": "unknown", "creation_order": 0}),
+             "speed_policy": speed.get(peer.id),
              "card_policy": card_policy(peer, restricted_flag, history_by_peer.get(peer.id, ()))}
             for peer, restricted_flag in shown
         ],

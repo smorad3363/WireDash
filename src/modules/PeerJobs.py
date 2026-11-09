@@ -39,6 +39,11 @@ class PeerJobs:
             db.Column('Peer', db.String(255), primary_key=True),
             db.Column('Weight', db.String(32), nullable=False),
         )
+        self.speedOutbox = db.Table('SpeedExpiryOutboxV1', self.metadata,
+            db.Column('ID', db.String(36), primary_key=True),
+            db.Column('Configuration', db.String(255), nullable=False),
+            db.Column('Peer', db.String(255), nullable=False),
+            db.Column('Payload', db.Text, nullable=False))
         self.metadata.create_all(self.engine)
         self.ledger = PeerTrafficLedger(self.engine, self.metadata)
         self._weights = {}
@@ -215,9 +220,34 @@ class PeerJobs:
     def searchJobById(self, JobID):
         return list(filter(lambda x: x.JobID == JobID, self.Jobs))
 
+    @locked_configurations
     def saveJob(self, Job: PeerJob) -> tuple[bool, list] | tuple[bool, str]:
         import traceback
         try:
+            expiry_fact = None
+            configuration = self.WireguardConfigurations.get(Job.Configuration)
+            speed_store = getattr(configuration, 'SpeedStore', None)
+            if speed_store and Job.Field == 'date' and Job.Action == 'restrict' and Job.Operator == 'lgt':
+                import json, time
+                from .PeerCardSummary import utc_naive
+                from .PeerSpeedStore import event_source
+                after = utc_naive(Job.Value, local=True)
+                if after:
+                    previous = [j for j in self.getAllJobs(Job.Configuration)
+                                if j.Peer == Job.Peer and j.Field == 'date' and j.Action == 'restrict' and j.Operator == 'lgt']
+                    same = [j for j in previous if j.JobID == Job.JobID]
+                    old = (same or sorted(previous, key=lambda j: str(j.CreationDate), reverse=True))
+                    before = utc_naive(old[0].Value, local=True) if old else None
+                    if before != after:
+                        candidates=list(configuration.getPeersList())+list(configuration.getRestrictedPeersList())
+                        peer=next((p for p in candidates if p.id==Job.Peer),None)
+                        if peer:
+                            usage=peer.metered_usage()
+                            with speed_store.engine.begin() as event_conn:
+                                value=speed_store.ensure(event_conn,Job.Peer,usage['receive'],usage['sent'])
+                            expiry_fact={'generation':value['generation'], 'at':time.time(),
+                                'event':{'before':before.isoformat()+'Z' if before else None,
+                                         'after':after.isoformat()+'Z', 'job_id':Job.JobID, 'source':event_source()}}
             staged_epoch = None
             factor_counters = None
             if Job.Field == "quota_total_data":
@@ -275,6 +305,9 @@ class PeerJobs:
                         staged_epoch = self.ledger.stage_factor(
                             conn, Job.Configuration, Job.Peer, *factor_counters,
                             self.weight_for(Job.Configuration, Job.Peer), str(weight))
+                if expiry_fact:
+                    conn.execute(self.speedOutbox.insert().values(ID=str(uuid.uuid4()),
+                        Configuration=Job.Configuration, Peer=Job.Peer, Payload=json.dumps(expiry_fact)))
             if Job.Field == "quota_total_data":
                 # Both quota job and snapshot committed in the SAME transaction.
                 self.ledger.committed(staged_epoch)
@@ -324,6 +357,7 @@ class PeerJobs:
                 )
             self.__getJobs()
             with self.engine.begin() as conn:
+                conn.execute(self.speedOutbox.update().where(self.speedOutbox.c.Configuration==ConfigurationName).values(Configuration=NewConfigurationName))
                 conn.execute(self.weightsTable.update().where(
                     self.weightsTable.c.Configuration == ConfigurationName
                 ).values(Configuration=NewConfigurationName))

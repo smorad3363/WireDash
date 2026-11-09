@@ -162,6 +162,10 @@ class WireguardConfiguration:
         if self.Status:
             self.addAutostart()
         self.PeerTimeline = PeerTimeline(self.engine, self.Name)
+        from .PeerSpeedStore import PeerSpeedStore
+        from .PeerSpeedController import PeerSpeedController
+        self.SpeedStore = PeerSpeedStore(self.engine, self.Name)
+        self.SpeedController = PeerSpeedController(self)
 
     def __getProtocolPath(self) -> str:
         _, path = self.DashboardConfig.GetConfig("Server", "wg_conf_path") if self.Protocol == "wg" \
@@ -583,6 +587,8 @@ class WireguardConfiguration:
                 timeline = getattr(self, "PeerTimeline", None)
                 if timeline is not None:
                     timeline.record_created(conn, keys)
+                if getattr(self, 'SpeedStore', None):
+                    self.SpeedStore.created(conn, keys)
                 status, message = self.__wgSave()
                 if not status:
                     raise RuntimeError("Could not save new peers")
@@ -692,7 +698,12 @@ class WireguardConfiguration:
         found, peer = self.searchPeer(key)
         if not peer.resetDataUsage(mode):
             return False, "Could not reset peer usage"
-        return self.allowAccessPeers([key])
+        result = self.allowAccessPeers([key])
+        if getattr(self, 'SpeedStore', None):
+            self.SpeedStore.reset_completed(key, result[0])
+            self.SpeedController.retry_at = 0
+            self.SpeedController.tick()
+        return result
 
     @locked_peer_state
     def restrictPeers(self, listOfPublicKeys) -> tuple[bool, str]:
@@ -777,6 +788,8 @@ class WireguardConfiguration:
                     subprocess.check_output(
                         [self.Protocol, "set", self.Name, "peer", peer.id, "remove"],
                         stderr=subprocess.STDOUT)
+                if getattr(self, 'SpeedController', None):
+                    self.SpeedController.remove_peer(peer.id)
                 table = self.peersTable if allowed else self.peersRestrictedTable
                 with self.engine.begin() as conn:
                     removed = conn.execute(
@@ -788,6 +801,8 @@ class WireguardConfiguration:
                     timeline = getattr(self, "PeerTimeline", None)
                     if timeline is not None:
                         timeline.forget(conn, peer.id)
+                    if getattr(self, 'SpeedStore', None):
+                        self.SpeedStore.forget(conn, peer.id)
                 if allowed:
                     active_changed = True
                 # Policy/share cleanup happens AFTER successful peer deletion.
@@ -1028,6 +1043,12 @@ class WireguardConfiguration:
             for l in self.__dumpDatabase():
                 f.write(l + "\n")
 
+        if getattr(self, 'SpeedStore', None):
+            import json
+            feature_path = os.path.join(self.__getProtocolPath(), 'WGDashboard_Backup', f'{self.Name}_{time}.speed.json')
+            with open(feature_path, 'w') as handle:
+                json.dump(self.SpeedStore.export_configuration(), handle)
+            os.chmod(feature_path, 0o600)
         return True, {
             "filename": f'{self.Name}_{time}.conf',
             "backupDate": datetime.now().strftime("%Y%m%d%H%M%S")
@@ -1062,6 +1083,8 @@ class WireguardConfiguration:
         backups = list(map(lambda x : x['filename'], self.getBackups()))
         if backupFileName not in backups:
             return False
+        if getattr(self, 'SpeedController', None):
+            self.SpeedController.tc.cleanup()
         if self.Status:
             self.toggleConfiguration()
         target = os.path.join(self.__getProtocolPath(), 'WGDashboard_Backup', backupFileName)
@@ -1076,6 +1099,12 @@ class WireguardConfiguration:
             return False
         self.__parseConfigurationFile()
         self.__importDatabase(targetSQL)
+        if getattr(self, 'SpeedStore', None):
+            feature_path = targetSQL.removesuffix('.sql') + '.speed.json'
+            if os.path.exists(feature_path):
+                import json
+                with open(feature_path) as handle:
+                    self.SpeedStore.restore_configuration(json.load(handle))
         self.__initPeersList()
         return True
 
@@ -1146,13 +1175,23 @@ class WireguardConfiguration:
                 
         return True, ""
 
+    @locked_peer_state
     def deleteConfiguration(self):
+        if getattr(self, 'SpeedController', None):
+            self.SpeedController.tc.cleanup()
+        if getattr(self, 'SpeedStore', None):
+            with self.engine.begin() as conn:
+                for table in (self.SpeedStore.peers,self.SpeedStore.kernel):
+                    conn.execute(table.delete().where(table.c.Configuration==self.Name))
+                table=self.PeerTimeline.table
+                conn.execute(table.delete().where(table.c.Configuration==self.Name))
         if self.getStatus():
             self.toggleConfiguration()
         os.remove(self.configPath)
         self.__dropDatabase()
         return True
 
+    @locked_peer_state
     def renameConfiguration(self, newConfigurationName) -> tuple[bool, str]:
         newConfigurationName = os.path.basename(newConfigurationName)
 
@@ -1162,6 +1201,8 @@ class WireguardConfiguration:
         newConfigurationName = newConfigurationName.replace("`", "") # double check
     
         try:
+            if getattr(self, 'SpeedController', None):
+                self.SpeedController.tc.cleanup()
             if self.getStatus():
                 self.toggleConfiguration()
             self.createDatabase(newConfigurationName)
@@ -1180,6 +1221,11 @@ class WireguardConfiguration:
                 doRenameStatement("_restrict_access")
                 doRenameStatement("_deleted")
                 doRenameStatement("_transfer")
+                if getattr(self, 'SpeedStore', None):
+                    self.SpeedStore.renamed(conn, newConfigurationName)
+                if getattr(self, 'PeerTimeline', None):
+                    table=self.PeerTimeline.table
+                    conn.execute(table.update().where(table.c.Configuration==self.Name).values(Configuration=newConfigurationName))
 
             self.AllPeerJobs.updateJobConfigurationName(self.Name, newConfigurationName)
             shutil.copy(

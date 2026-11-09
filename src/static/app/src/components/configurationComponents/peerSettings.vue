@@ -3,9 +3,11 @@ import {fetchPost} from "@/utilities/fetch.js";
 import {DashboardConfigurationStore} from "@/stores/DashboardConfigurationStore.js";
 import LocaleText from "@/components/text/localeText.vue";
 
+import SpeedPolicyEditor from '@/components/settingsComponent/speedPolicyEditor.vue';
+
 export default {
 	name: "peerSettings",
-	components: {LocaleText},
+	components: {LocaleText, SpeedPolicyEditor},
 	props: {
 		selectedPeer: Object
 	},
@@ -230,7 +232,8 @@ export default {
 								</button>
 							</div>
 							<hr>
-							<div class="d-flex gap-2 align-items-center">
+							<SpeedPolicyEditor :peer-id="data.id" :configuration="$route.params.id" @saved="$emit('refresh')" />
+                    <div class="d-flex gap-2 align-items-center">
 								<strong>
 									<LocaleText t="Reset Data Usage"></LocaleText>
 								</strong>

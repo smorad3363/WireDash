@@ -353,11 +353,19 @@ class Peer:
                     self.total_sent = 0
                 else:
                     return False
+                if getattr(self.configuration, 'SpeedStore', None):
+                    usage = self.configuration.AllPeerJobs.metered_for(
+                        self.configuration.Name, self.id, previous_receive, previous_sent)
+                    self.configuration.SpeedStore.reset_committed(
+                        conn, self.id, mode, usage['receive'], usage['sent'],
+                        previous_receive, previous_sent)
             # Keep the ledger consistent with an explicit counter reset;
             # otherwise future usage could be compared to the old anchor.
             self.configuration.AllPeerJobs.reset_metering(
                 self.configuration.Name, self.id,
                 previous_receive, previous_sent, mode)
+            if getattr(self.configuration, 'SpeedStore', None):
+                self.configuration.SpeedStore.ledger_completed(self.id)
         except Exception as e:
             print(e)
             return False

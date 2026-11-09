@@ -113,6 +113,8 @@ def peerInformationBackgroundThread():
                                     if c.configurationInfo.PeerHistoricalEndpointTracking:
                                         c.logPeersHistoryEndpoint()
                             c.getRestrictedPeersList()
+                            if getattr(c, 'SpeedController', None):
+                                c.SpeedController.tick()
             except Exception as e:
                 app.logger.exception("[WGDashboard] Background Thread #1 Error")
 
@@ -226,6 +228,8 @@ with app.app_context():
     app.register_blueprint(createClientBlueprint(WireguardConfigurations, DashboardConfig, DashboardClients))
 
 _, APP_PREFIX = DashboardConfig.GetConfig("Server", "app_prefix")
+from modules.PeerSpeedUI import make_blueprint as make_speed_blueprint
+app.register_blueprint(make_speed_blueprint(WireguardConfigurations, DashboardConfig, APP_PREFIX))
 cors = CORS(app, resources={rf"{APP_PREFIX}/api/*": {
     "origins": "*",
     "methods": "DELETE, POST, GET, OPTIONS",

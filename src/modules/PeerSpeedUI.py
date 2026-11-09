@@ -8,10 +8,19 @@ from .PeerState import configuration_lock
 def make_blueprint(configurations, dashboard, prefix=''):
     ui = Blueprint('speed_policy_ui', __name__, url_prefix=prefix+'/api/ui/speed')
 
+    @ui.after_app_request
+    def record_login_source(response):
+        if request.path == prefix+'/api/authenticate' and request.method=='POST':
+            result=response.get_json(silent=True)
+            if result and result.get('status'):
+                session['speed_password_login'] = not bool(request.headers.get('wg-dashboard-apikey'))
+        return response
+
     @ui.before_request
     def authorize():
         if (dashboard.GetConfig('Server','auth_req')[1] is not True
             or request.headers.get('wg-dashboard-apikey') is not None
+            or not session.get('speed_password_login')
             or session.get('role') != 'admin' or not session.get('username')
             or session.get('username') != request.cookies.get('authToken')):
             return jsonify(status=False, message='Admin session required'), 403
@@ -37,14 +46,14 @@ def make_blueprint(configurations, dashboard, prefix=''):
             s=store()
             if request.method == 'POST':
                 payload=request.get_json()
-                s.save_defaults(payload['policy'],payload['revision'],payload['overwrite'])
+                s.save_defaults(payload['policy'],payload['revision'],payload['overwrite'],payload['master_enabled'])
+                for c in configurations.values():
+                    if getattr(c,'SpeedController',None):
+                        c.SpeedController.retry_at=0
             session.setdefault('speed_csrf',secrets.token_urlsafe(32))
             with s.engine.connect() as conn:
                 data=s.defaults(conn)
-                rows=conn.execute(s.peers.select()).mappings().all()
-            import json
-            modes=[json.loads(r['Payload']).get('mode','inherit') for r in rows]
-            data['counts']={mode:modes.count(mode) for mode in ('inherit','custom','exempt')}
+                data['counts']=s.counts(conn)
             return jsonify(status=True,data=data,csrf=session['speed_csrf'])
         except (ValueError,KeyError,TypeError):
             return jsonify(status=False,message='Invalid settings or stale revision; reload'),409
@@ -63,8 +72,11 @@ def make_blueprint(configurations, dashboard, prefix=''):
             try:
                 if request.method=='POST':
                     c.SpeedStore.save_peer(key,payload,payload['revision'])
+                    c.SpeedController.retry_at=0
                 session.setdefault('speed_csrf',secrets.token_urlsafe(32))
-                return jsonify(status=True,data=c.SpeedStore.snapshot(key),csrf=session['speed_csrf'])
+                result=c.SpeedStore.snapshot(key)
+                result['controller']={'status':c.SpeedController.status,'message':c.SpeedController.last_error}
+                return jsonify(status=True,data=result,csrf=session['speed_csrf'])
             except (ValueError,KeyError,TypeError):
                 return jsonify(status=False,message='Invalid policy or stale account; reload'),409
     return ui

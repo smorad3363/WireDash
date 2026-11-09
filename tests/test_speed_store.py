@@ -18,7 +18,7 @@ class Store(unittest.TestCase):
     def test_idempotent_migration_and_defaults(self):
         PeerSpeedStore(self.engine,'wg-test')
         with self.engine.connect() as c:
-            self.assertEqual(self.store.defaults(c),{'revision':0,'policy':DEFAULT_POLICY})
+            self.assertEqual(self.store.defaults(c),{'revision':0,'policy':DEFAULT_POLICY,'master_enabled':False})
     def test_counter_journal_rolls_back_with_counter_transaction(self):
         self.ensure()
         with self.assertRaises(RuntimeError):
@@ -48,11 +48,11 @@ class Store(unittest.TestCase):
         self.assertEqual(s['state']['download'],0)
     def test_preserve_then_overwrite_and_stale_revision(self):
         v=self.ensure();self.store.save_peer('peer',{'mode':'exempt'},v['revision'])
-        self.store.save_defaults(DEFAULT_POLICY,0,False)
+        self.store.save_defaults(DEFAULT_POLICY,1,False)
         self.assertEqual(self.store.snapshot('peer')['mode'],'exempt')
         with self.assertRaises(ValueError):self.store.save_defaults(DEFAULT_POLICY,0,True)
         self.assertEqual(self.store.snapshot('peer')['mode'],'exempt')
-        self.store.save_defaults(DEFAULT_POLICY,1,True)
+        self.store.save_defaults(DEFAULT_POLICY,2,True)
         self.assertEqual(self.store.snapshot('peer')['mode'],'inherit')
     def test_deleted_recreated_key_never_inherits_old_history(self):
         self.ensure()

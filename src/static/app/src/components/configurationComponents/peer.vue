@@ -83,6 +83,13 @@ const canExport = computed(() => !props.Peer.restricted && !!props.Peer.private_
       </div>
     </div>
 
+    <div v-if="Peer.speed_policy?.state" class="px-3 pb-2 small text-muted">
+      Period ↓ {{gb(Peer.speed_policy.state.download)}} / ↑ {{gb(Peer.speed_policy.state.upload)}} GB
+      <span v-for="direction in ['download','upload']" :key="direction">
+        <span v-if="Peer.speed_policy.applied_caps?.[direction]" class="badge text-bg-warning ms-1">{{direction}} {{Peer.speed_policy.applied_caps[direction]}} Mbps</span>
+      </span>
+      <span v-if="Peer.speed_policy.pending_reset" class="badge text-bg-warning ms-1">Reset pending</span>
+    </div>
     <dl class="peer-card__facts">
       <div><dt>{{GetLocale('Expiry')}}</dt><dd :class="{'text-danger-emphasis': time.state === 'expired'}">{{remainingTime}}</dd>
         <dd class="peer-card__secondary" v-if="time.expires_at">{{date(time.expires_at)}}</dd></div>
@@ -90,6 +97,8 @@ const canExport = computed(() => !props.Peer.restricted && !!props.Peer.private_
         <dd class="peer-card__secondary" v-if="Peer.endpoint && Peer.endpoint !== 'N/A'" dir="ltr">{{Peer.endpoint}}</dd></div>
       <div class="peer-card__created"><dt>{{GetLocale(Peer.creation_basis === 'created' ? 'Created' : 'First record')}}</dt>
         <dd>{{date(Peer.created_at)}}</dd></div>
+      <div v-if="Peer.speed_policy?.last_renewal"><dt>Last observed renewal</dt><dd>{{date(new Date(Peer.speed_policy.last_renewal*1000).toISOString())}}</dd></div>
+      <div v-if="Peer.speed_policy?.last_reset"><dt>Last usage reset</dt><dd>{{date(new Date(Peer.speed_policy.last_reset*1000).toISOString())}}</dd></div>
     </dl>
 
     <div class="peer-card__tags" v-if="groups.length">

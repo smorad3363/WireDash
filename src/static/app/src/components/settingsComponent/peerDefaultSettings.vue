@@ -3,6 +3,7 @@
 import LocaleText from "@/components/text/localeText.vue";
 import PeersDefaultSettingsInput from "@/components/settingsComponent/peersDefaultSettingsInput.vue";
 import PeerTrafficFactorDefault from "@/components/settingsComponent/peerTrafficFactorDefault.vue";
+import SpeedPolicyEditor from './speedPolicyEditor.vue';
 </script>
 
 <template>
@@ -28,6 +29,7 @@ import PeerTrafficFactorDefault from "@/components/settingsComponent/peerTraffic
 						:warning="true" warningText="This will be changed globally, and will be apply to all peer's QR code and configuration file."
 					></PeersDefaultSettingsInput>
 					<PeerTrafficFactorDefault />
+                    <SpeedPolicyEditor />
 				</div>
 			</div>
 		</div>

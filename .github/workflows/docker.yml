@@ -68,6 +68,20 @@ jobs:
             --entrypoint /opt/wgdashboard/src/venv/bin/python3 \
             ghcr.io/smorad3363/wiredash:sha-${{ github.sha }} \
             /tests/test_peer_overlap_runtime.py
+      - name: Speed policy, persistence, renewal history and private authorization
+        run: |
+          for test in test_speed_policy test_speed_store test_speed_ui test_speed_history test_speed_scale; do
+            docker run --rm --network none --read-only --tmpfs /tmp:rw,size=128m \
+              -v "$PWD:/candidate:ro" -w /candidate \
+              --entrypoint /opt/wgdashboard/src/venv/bin/python3 \
+              ghcr.io/smorad3363/wiredash:sha-${{ github.sha }} /candidate/tests/$test.py
+          done
+      - name: Encrypted WireGuard speed and interrupted-install recovery
+        run: |
+          docker run --rm --privileged --network none \
+            -e WIREDASH_DISPOSABLE_KERNEL_TEST=1 -v "$PWD:/candidate:ro" \
+            --entrypoint /opt/wgdashboard/src/venv/bin/python3 \
+            ghcr.io/smorad3363/wiredash:sha-${{ github.sha }} /candidate/tests/test_speed_kernel.py
       # Do not advertise a new version to the installer until its image is
       # published AND regression tests pass on that image.
       - name: Promote latest successfully published commit

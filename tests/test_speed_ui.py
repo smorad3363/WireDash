@@ -15,7 +15,11 @@ class Auth(unittest.TestCase):
     def login(self):
         self.client.set_cookie('authToken','test-admin')
         with self.client.session_transaction() as s:
-            s.update(role='admin',username='test-admin',speed_csrf='token')
+            s.update(role='admin',username='test-admin',speed_csrf='token',speed_password_login=True)
+    def test_api_derived_session_denied(self):
+        self.login()
+        with self.client.session_transaction() as s:s['speed_password_login']=False
+        self.assertEqual(self.client.get('/api/ui/speed/settings').status_code,403)
     def test_public_denied(self):
         self.assertEqual(self.client.get('/api/ui/speed/settings').status_code,403)
     def test_api_key_denied_even_with_session(self):
