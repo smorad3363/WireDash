@@ -105,6 +105,15 @@ class PeerStateTests(unittest.TestCase):
         with self.assertRaises(PeerConfigurationError):
             self.cfg.searchPeer(self.key)[1].downloadPeer()
 
+    def test_edit_persists_an_explicit_valid_address_change(self):
+        peer = self.cfg.searchPeer(self.key)[1]
+        with patch('modules.Peer.subprocess.check_output', side_effect=[b'', ('wg showconf '+self.cfg.Name).encode()]):
+            ok, message = peer.updatePeer(peer.name, '', '', '1.1.1.1',
+                '10.250.20.20/32', '0.0.0.0/0', 1380, 25, '')
+        self.assertTrue(ok, message)
+        self.cfg.getPeers()
+        self.assertEqual(self.cfg.searchPeer(self.key)[1].allowed_ip, '10.250.20.20/32')
+
     def test_partial_creation_rolls_back(self):
         row = dict(self.rows(self.cfg.peersTable)[2], id='new-test-key', allowed_ip='10.250.20.1/32')
         for field in ['total_receive','total_sent','total_data','cumu_receive','cumu_sent','cumu_data','endpoint','status','latest_handshake','remote_endpoint']:

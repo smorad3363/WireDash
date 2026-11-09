@@ -174,6 +174,7 @@ class Peer:
                 conn.execute(
                     self.configuration.peersTable.update().values({
                         "name": name,
+                        "allowed_ip": newAllowedIPs,
                         "private_key": private_key,
                         "DNS": dns_addresses,
                         "endpoint_allowed_ip": endpoint_allowed_ip,
