@@ -24,11 +24,12 @@ class PerformanceTests(unittest.TestCase):
         self.assertIn("time.monotonic()", ast.get_source_segment(self.config_source, sample))
 
     def test_reuse_peers_and_restricted_objects(self):
-        for path in ("src/modules/WireguardConfiguration.py",
-                     "src/modules/AmneziaConfiguration.py"):
-            data = Path(path).read_text()
-            self.assertIn("peer.refreshFromRow(row)", data)
-            self.assertIn("cached.get(row[", data)
+        data = Path("src/modules/WireguardConfiguration.py").read_text()
+        self.assertIn("peer.refreshFromRow(row)", data)
+        self.assertIn("cached.get(row[", data)
+        awg = Path("src/modules/AmneziaConfiguration.py").read_text()
+        self.assertIn("return super().getPeers()", awg)
+        self.assertIn("return AmneziaPeer", awg)
         peer = Path("src/modules/Peer.py").read_text()
         self.assertIn("def refreshFromRow(self, row)", peer)
         self.assertIn("datetime.datetime.now()", peer)

@@ -28,6 +28,7 @@ const configurationInfo = ref({})
 const configurationPeers = ref([])
 const chartPeers = ref([])
 const bulkPeers = ref([])
+const peerSort = ref("created_desc")
 const peerPage = ref(1)
 const peerPageSize = 50
 const totalPeers = ref(0)
@@ -102,7 +103,7 @@ const fetchPeerList = async () => {
 			page: peerPage.value,
 			perPage: peerPageSize,
 			search: wireguardConfigurationStore.searchString || "",
-			sort: dashboardStore.Configuration.Server.dashboard_sort || "name",
+			sort: peerSort.value,
 			hiddenTags: wireguardConfigurationStore.Filter.HiddenTags.join(","),
 			showAllWhenHidden: wireguardConfigurationStore.Filter.ShowAllPeersWhenHiddenTags
 		}, (res) => {
@@ -170,6 +171,13 @@ const toggleConfiguration = async () => {
 
 // Server-side search, sort and paging; full lists are loaded only for bulk UI.
 const searchPeers = computed(() => configurationPeers.value)
+const showNewestPeers = async () => {
+    configurationModals.value.peerNew.modalOpen = false
+    peerSort.value = "created_desc"
+    peerPage.value = 1
+    wireguardConfigurationStore.searchString = ""
+    await fetchPeerList()
+}
 const gotoPeerPage = async (page) => {
 	if (page < 1 || page > pageCount.value || page === peerPage.value) return
 	peerPage.value = page
@@ -192,7 +200,7 @@ const openBulkModal = async (modal) => {
 }
 watch(() => JSON.stringify([
 	wireguardConfigurationStore.searchString || "",
-	dashboardStore.Configuration.Server.dashboard_sort,
+	peerSort.value,
 	wireguardConfigurationStore.Filter.HiddenTags,
 	wireguardConfigurationStore.Filter.ShowAllPeersWhenHiddenTags,
 ]), () => {
@@ -361,7 +369,7 @@ watch(() => route.query.id, (newValue) => {
 	></PeerDataUsageCharts>
 	<small class="text-muted">Usage chart: top 30 peers by total metered traffic; upload and download remain separate.</small>
 	<hr>
-	<div style="margin-bottom: 10rem">
+	<div style="margin-bottom: 2rem">
 		<PeerSearch
 			v-if="totalPeers > 0"
 			@search="peerSearchBar = !peerSearchBar"
@@ -371,11 +379,10 @@ watch(() => route.query.id, (newValue) => {
 			@selectPeers="configurationModals.selectPeers.modalOpen = true"
 			@backupRestore="configurationModals.backupRestore.modalOpen = true"
 			@deleteConfiguration="configurationModals.deleteConfiguration.modalOpen = true"
-			:configuration="configurationInfo">
+			:configuration="configurationInfo" :sortValue="peerSort" @sort="peerSort = $event">
 		</PeerSearch>
-		<TransitionGroup name="peerList" tag="div" class="row gx-2 gy-2 z-0 position-relative">
-			<div class="col-12"
-			     :class="{'col-lg-6 col-xl-4': dashboardStore.Configuration.Server.dashboard_peer_list_display === 'grid'}"
+		<div class="peer-card-grid">
+			<div class="peer-card-grid__item"
 			     :key="peer.id"
 			     v-for="(peer, order) in searchPeers">
 				<Peer :Peer="peer"
@@ -393,7 +400,7 @@ watch(() => route.query.id, (newValue) => {
 				      @assign="configurationModalSelectedPeer = peer; configurationModals.assignPeer.modalOpen = true;"
 				></Peer>
 			</div>
-		</TransitionGroup>
+		</div>
 		
 	</div>
 	<Transition name="slide-fade">
@@ -413,7 +420,7 @@ watch(() => route.query.id, (newValue) => {
 			<PeerAddModal
 				v-if="configurationModals.peerNew.modalOpen"
 				@close="configurationModals.peerNew.modalOpen = false"
-				@addedPeers="configurationModals.peerNew.modalOpen = false; fetchPeerList()"
+				@addedPeers="showNewestPeers()"
 			></PeerAddModal>
 		</Suspense>
 		<PeerJobsAllModal
@@ -483,4 +490,10 @@ th, td{
 		flex-basis: 100%;
 	}
 }
+</style>
+<style scoped>
+.peer-card-grid {display:grid; grid-template-columns:minmax(0,1fr); gap:12px; align-items:stretch;}
+.peer-card-grid__item {min-width:0;}
+@media (min-width:850px) {.peer-card-grid {grid-template-columns:repeat(2,minmax(0,1fr));}}
+@media (min-width:1440px) {.peer-card-grid {grid-template-columns:repeat(3,minmax(0,1fr));}}
 </style>

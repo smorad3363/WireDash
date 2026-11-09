@@ -60,6 +60,24 @@ for name,node in a.items():
         expected = ast.parse("resetStatus, message = wgc.resetPeerData(id, type)\nreturn ResponseObject(status=resetStatus, message=message if not resetStatus else None)")
         assert [ast.dump(x) for x in candidate.body[7:]] == [ast.dump(x) for x in expected.body]
         continue
+    if name == "API_UI_getConfigurationPage":
+        # UI-only sort extension; the bot-facing configuration route is still
+        # compared without exceptions. Paging/auth/validation stay intact.
+        class NormalizeUISort(ast.NodeTransformer):
+            def visit_Constant(self, value):
+                if value.value == "created_desc":
+                    value.value = "name"
+                return value
+            def visit_Tuple(self, value):
+                self.generic_visit(value)
+                if all(isinstance(x, ast.Constant) for x in value.elts):
+                    values = [x.value for x in value.elts]
+                    if values == ["name", "name", "status", "allowed_ip", "restricted"]:
+                        value.elts = value.elts[1:]
+                return value
+        assert ast.dump(NormalizeUISort().visit(node), include_attributes=False) == ast.dump(
+            NormalizeUISort().visit(candidate), include_attributes=False), "UI page changes beyond newest sort"
+        continue
     if name=="API_allowAccessPeersLegacy":
         # Reviewed legacy compatibility shim only. The original upstream
         # /api/allowAccessPeers/<configName> remains AST-identical and all

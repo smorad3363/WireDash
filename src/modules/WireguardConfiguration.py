@@ -15,6 +15,7 @@ from flask import current_app
 from .DatabaseConnection import ConnectionString
 from .DashboardConfig import DashboardConfig
 from .Peer import Peer
+from .PeerTimeline import PeerTimeline
 from .PeerState import (locked_peer_state, address_networks, addresses_overlap,
                         preferred_peer_record)
 from .PeerJobs import PeerJobs
@@ -160,6 +161,7 @@ class WireguardConfiguration:
         
         if self.Status:
             self.addAutostart()
+        self.PeerTimeline = PeerTimeline(self.engine, self.Name)
 
     def __getProtocolPath(self) -> str:
         _, path = self.DashboardConfig.GetConfig("Server", "wg_conf_path") if self.Protocol == "wg" \
@@ -464,6 +466,14 @@ class WireguardConfiguration:
             peers.append(peer)
         self.Peers = peers
 
+    @locked_peer_state
+    def uiCreationInfo(self, peers, jobs):
+        timeline = getattr(self, "PeerTimeline", None)
+        if timeline is None:
+            return {}
+        share_table = getattr(self.AllPeerShareLinks, "peerShareLinksTable", None)
+        return timeline.snapshot(peers, jobs, share_table)
+
     def _peer_type(self):
         return Peer
 
@@ -570,6 +580,9 @@ class WireguardConfiguration:
                     # Include the key in cleanup even if a command partly succeeds.
                     installed.append(peer["id"])
                     self._set_peer_route(row)
+                timeline = getattr(self, "PeerTimeline", None)
+                if timeline is not None:
+                    timeline.record_created(conn, keys)
                 status, message = self.__wgSave()
                 if not status:
                     raise RuntimeError("Could not save new peers")
@@ -772,6 +785,9 @@ class WireguardConfiguration:
                         raise RuntimeError("Selected peer is no longer in the expected table")
                     other = self.peersRestrictedTable if allowed else self.peersTable
                     conn.execute(other.delete().where(other.c.id == peer.id))
+                    timeline = getattr(self, "PeerTimeline", None)
+                    if timeline is not None:
+                        timeline.forget(conn, peer.id)
                 if allowed:
                     active_changed = True
                 # Policy/share cleanup happens AFTER successful peer deletion.

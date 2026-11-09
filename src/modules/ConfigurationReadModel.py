@@ -21,7 +21,7 @@ def configuration_info_payload(configuration):
     }
 
 
-def ui_configuration_page(configuration, page=1, per_page=50, query="", sort="name", hidden_tags=(), show_all_when_hidden=True):
+def ui_configuration_page(configuration, page=1, per_page=50, query="", sort="created_desc", hidden_tags=(), show_all_when_hidden=True):
     """Admin UI only: small paginated response; legacy API stays byte-identical.
 
     Filtering/sorting always happens before slicing, and summary reflects ALL
@@ -34,6 +34,14 @@ def ui_configuration_page(configuration, page=1, per_page=50, query="", sort="na
     active = configuration.getPeersList()
     restricted = configuration.getRestrictedPeersList()
     all_peers = [(p, False) for p in active] + [(p, True) for p in restricted]
+    from .PeerCardSummary import card_policy
+    history_by_peer = {}
+    jobs_source = getattr(configuration, "AllPeerJobs", None)
+    history = jobs_source.getAllJobs(configuration.Name) if callable(getattr(jobs_source, "getAllJobs", None)) else []
+    for job in history:
+        history_by_peer.setdefault(job.Peer, []).append(job)
+    creation = configuration.uiCreationInfo([p for p, _ in all_peers], history) if callable(
+        getattr(configuration, "uiCreationInfo", None)) else {}
     groups = configuration.configurationInfo.PeerGroups or {}
     ignored_ids = set()
     tagged_ids = set()
@@ -71,7 +79,12 @@ def ui_configuration_page(configuration, page=1, per_page=50, query="", sort="na
         except (ValueError, AttributeError):
             return (1, 0)
 
-    if sort == "allowed_ip":
+    if sort == "created_desc":
+        matches.sort(key=lambda item: (
+            bool(creation.get(item[0].id, {}).get("created_at")),
+            creation.get(item[0].id, {}).get("created_at") or "",
+            creation.get(item[0].id, {}).get("creation_order", 0), item[0].id), reverse=True)
+    elif sort == "allowed_ip":
         matches.sort(key=lambda item: (address_key(item[0]), item[0].id))
     elif sort == "restricted":
         matches.sort(key=lambda item: (not item[1], item[0].id))
@@ -90,7 +103,9 @@ def ui_configuration_page(configuration, page=1, per_page=50, query="", sort="na
         "configurationInfo": configuration,
         "configurationPeers": [
             {**{k: v for k, v in peer.toJson().items() if k != "configuration"},
-             "restricted": restricted_flag}
+             "restricted": restricted_flag,
+             **creation.get(peer.id, {"created_at": None, "creation_basis": "unknown", "creation_order": 0}),
+             "card_policy": card_policy(peer, restricted_flag, history_by_peer.get(peer.id, ()))}
             for peer, restricted_flag in shown
         ],
         "chartPeers": [

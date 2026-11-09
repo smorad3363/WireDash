@@ -11,6 +11,7 @@ import ast
 import datetime as dt
 import importlib.util
 import json
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
@@ -216,7 +217,8 @@ def main():
     args = parser.parse_args()
     root = args.repo.resolve()
     RepairProbes.root = root
-    spec = importlib.util.spec_from_file_location("review_read_model", root / "src/modules/ConfigurationReadModel.py")
+    sys.path.insert(0, str(root / "src"))
+    spec = importlib.util.spec_from_file_location("modules.ConfigurationReadModel", root / "src/modules/ConfigurationReadModel.py")
     model = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(model)
     RepairProbes.read_model = model

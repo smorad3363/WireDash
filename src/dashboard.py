@@ -1337,8 +1337,8 @@ def API_UI_getConfigurationPage():
         return ResponseObject(False, "Invalid page parameters")
     if page < 1 or not 1 <= per_page <= 100:
         return ResponseObject(False, "Page size must be between 1 and 100")
-    sort = request.args.get("sort", "name")
-    if sort not in ("name", "status", "allowed_ip", "restricted"):
+    sort = request.args.get("sort", "created_desc")
+    if sort not in ("created_desc", "name", "status", "allowed_ip", "restricted"):
         return ResponseObject(False, "Invalid sort")
     hidden = request.args.get("hiddenTags", "")
     # Keep payloads bounded to prevent pathological URLs and filter work.

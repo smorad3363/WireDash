@@ -16,11 +16,12 @@ export default {
 		return {store, wireguardConfigurationStore}
 	},
 	props: {
-		configuration: Object, displayTags: Array
+		configuration: Object, displayTags: Array, sortValue: {type: String, default: "created_desc"}
 	},
 	data(){
 		return {
 			sort: {
+                created_desc: GetLocale("Newest first"),
 				status: GetLocale("Status"),
 				name: GetLocale("Name"),
 				allowed_ip: GetLocale("Allowed IPs"),
@@ -32,10 +33,6 @@ export default {
 				'30000': GetLocale('30 Seconds'),
 				'60000': GetLocale('1 Minutes')
 			},
-			display: {
-				grid: GetLocale('Grid'),
-				list: GetLocale('List')
-			},
 			searchString: "",
 			searchStringTimeout: undefined,
 			showDisplaySettings: false,
@@ -44,17 +41,7 @@ export default {
 		}
 	},
 	methods: {
-		updateSort(sort){
-			fetchPost("/api/updateDashboardConfigurationItem", {
-				section: "Server",
-				key: "dashboard_sort",
-				value: sort
-			}, (res) => {
-				if (res.status){
-					this.store.getConfiguration();
-				}
-			})
-		},
+        updateSort(sort){this.$emit("sort", sort)},
 		updateRefreshInterval(refreshInterval){
 			fetchPost("/api/updateDashboardConfigurationItem", {
 				section: "Server",
@@ -65,17 +52,6 @@ export default {
 					this.store.getConfiguration();
 				}
 			})
-		},
-		updateDisplay(display){
-			fetchPost("/api/updateDashboardConfigurationItem", {
-				section: "Server",
-				key: "dashboard_peer_list_display",
-				value: display
-			}, (res) => {
-				if (res.status){
-					this.store.getConfiguration();
-				}
-			})	
 		},
 		downloadAllPeer(){
 			fetchGet(`/api/downloadAllPeers/${this.configuration.Name}`, {}, (res) => {
@@ -98,7 +74,7 @@ export default {
 					class="btn w-100 btn-sm text-primary-emphasis bg-primary-subtle rounded-3 border-1 border-primary-subtle  position-relative">
 					<i class="bi bi-sort-up me-2"></i>
 					<LocaleText t="Sort By"></LocaleText>
-					<span class="badge text-bg-primary ms-2">{{this.sort[store.Configuration.Server.dashboard_sort]}}</span>
+					<span class="badge text-bg-primary ms-2">{{this.sort[sortValue]}}</span>
 				</button>
 				<ul class="dropdown-menu rounded-3">
 					<li v-for="(value, key) in this.sort" >
@@ -108,7 +84,7 @@ export default {
 							</small>
 							<small class="ms-auto">
 								<i class="bi bi-check-circle-fill"
-								   v-if="store.Configuration.Server.dashboard_sort === key"></i>
+								   v-if="sortValue === key"></i>
 							</small>
 						</button>
 					</li>
@@ -131,28 +107,6 @@ export default {
 							<small class="ms-auto">
 								<i class="bi bi-check-circle-fill"
 								   v-if="store.Configuration.Server.dashboard_refresh_interval === key"></i>
-							</small>
-						</button>
-					</li>
-				</ul>
-			</div>
-			<div class="dropdown">
-				<button
-					data-bs-toggle="dropdown"
-					class="btn btn-sm w-100 text-primary-emphasis bg-primary-subtle rounded-3 border-1 border-primary-subtle  position-relative">
-					<i class="bi me-2" :class="'bi-' + store.Configuration.Server.dashboard_peer_list_display"></i>
-					<LocaleText t="Display"></LocaleText>
-					<span class="badge text-bg-primary ms-2">{{this.display[store.Configuration.Server.dashboard_peer_list_display]}}</span>
-				</button>
-				<ul class="dropdown-menu rounded-3">
-					<li v-for="(value, key) in this.display" >
-						<button class="dropdown-item d-flex align-items-center" @click="this.updateDisplay(key)">
-							<small>
-								{{ value }}
-							</small>
-							<small class="ms-auto">
-								<i class="bi bi-check-circle-fill"
-								   v-if="store.Configuration.Server.dashboard_peer_list_display === key"></i>
 							</small>
 						</button>
 					</li>
@@ -225,10 +179,11 @@ export default {
 	width: 400px !important;
 }
 
+ .peerSearchContainer {flex-wrap:wrap; align-items:stretch;}
 @media screen and (max-width: 992px) {
-	.peerSearchContainer{
-		flex-direction: column;
-	}
+    .peerSearchContainer {display:grid !important; grid-template-columns:repeat(2,minmax(0,1fr));}
+    .peerSearchContainer > * {min-width:0;}
+    .peerSearchContainer button {min-height:40px;}
 	
 	.peerSettingContainer .dashboardModal{
 		width: 100% !important;
@@ -242,4 +197,8 @@ export default {
 	align-items: center;
 	
 }
+</style>
+<style scoped>
+.peerSearchContainer .dropdown > button {flex-wrap:wrap; gap:4px; min-width:0;}
+@media(pointer:coarse) {.peerSearchContainer button {min-height:44px;}}
 </style>

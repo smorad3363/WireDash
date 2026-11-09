@@ -40,6 +40,15 @@ jobs:
           push: true
           tags: |
             ghcr.io/smorad3363/wiredash:sha-${{ github.sha }}
+      - name: Account creation order and read-only policy cards
+        run: |
+          docker run --rm --network none --read-only \
+            --tmpfs /tmp:rw,nosuid,nodev,size=64m \
+            -v "$PWD/tests:/tests:ro" \
+            -e PYTHONPATH=/opt/wgdashboard/src \
+            -w /opt/wgdashboard/src \
+            --entrypoint /opt/wgdashboard/src/venv/bin/python3 ghcr.io/smorad3363/wiredash:sha-${{ github.sha }} \
+            /tests/test_peer_cards_runtime.py
       - name: Peer addresses, stale file and concurrent renewal regression
         run: |
           docker run --rm --network none --read-only \
