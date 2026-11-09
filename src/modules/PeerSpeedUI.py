@@ -13,7 +13,22 @@ def make_blueprint(configurations, dashboard, prefix=''):
         if request.path == prefix+'/api/authenticate' and request.method=='POST':
             result=response.get_json(silent=True)
             if result and result.get('status'):
-                session['speed_password_login'] = not bool(request.headers.get('wg-dashboard-apikey'))
+                verified=False
+                # Legacy authentication uses a process-global APIAccessed flag.
+                # Independently verify credentials before granting this feature's
+                # private session capability, including TOTP when configured.
+                if not request.headers.get('wg-dashboard-apikey'):
+                    credentials=request.get_json(silent=True) or {}
+                    try:
+                        import bcrypt,pyotp
+                        verified=(isinstance(credentials.get('password'),str)
+                            and credentials.get('username')==dashboard.GetConfig('Account','username')[1]
+                            and bcrypt.checkpw(credentials['password'].encode(),dashboard.GetConfig('Account','password')[1].encode()))
+                        if verified and dashboard.GetConfig('Account','enable_totp')[1]:
+                            verified=pyotp.TOTP(dashboard.GetConfig('Account','totp_key')[1]).verify(credentials.get('totp',''))
+                    except (ValueError,TypeError,AttributeError,ImportError):
+                        verified=False
+                session['speed_password_login'] = verified
         return response
 
     @ui.before_request

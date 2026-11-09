@@ -20,6 +20,12 @@ class Auth(unittest.TestCase):
         self.login()
         with self.client.session_transaction() as s:s['speed_password_login']=False
         self.assertEqual(self.client.get('/api/ui/speed/settings').status_code,403)
+    def test_upstream_success_without_password_cannot_grant_private_capability(self):
+        from flask import jsonify
+        self.app.add_url_rule('/api/authenticate','stub_login',lambda:jsonify(status=True),methods=['POST'])
+        self.login()
+        self.client.post('/api/authenticate',json={})
+        self.assertEqual(self.client.get('/api/ui/speed/settings').status_code,403)
     def test_public_denied(self):
         self.assertEqual(self.client.get('/api/ui/speed/settings').status_code,403)
     def test_api_key_denied_even_with_session(self):
