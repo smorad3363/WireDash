@@ -62,6 +62,8 @@ jobs:
       - name: Source compatibility for clean installs and upgrades
         run: python3 tests/test_first_setup_contract.py
 
+      - name: Speed settings editor interactions
+        run: node tests/test_speed_editor.mjs
       - name: ShellCheck
         run: shellcheck -S warning install.sh deploy/wgdashbackup.sh deploy/wgd-watchdog.sh tests/smoke.sh tests/run_synthetic_benchmark.sh
       - name: Compose parse

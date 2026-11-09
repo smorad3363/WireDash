@@ -29,10 +29,10 @@ import SpeedPolicyEditor from './speedPolicyEditor.vue';
 						:warning="true" warningText="This will be changed globally, and will be apply to all peer's QR code and configuration file."
 					></PeersDefaultSettingsInput>
 					<PeerTrafficFactorDefault />
-                    <SpeedPolicyEditor />
 				</div>
 			</div>
 		</div>
+		<SpeedPolicyEditor />
 	</div>
 </template>
 
