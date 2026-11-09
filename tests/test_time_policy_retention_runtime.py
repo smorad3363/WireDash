@@ -12,7 +12,7 @@ from benchmark_synthetic_api import make_fake_config
 
 with tempfile.TemporaryDirectory() as tmp:
     cfg = make_fake_config(3, tmp)
-    cfg._WireguardConfiguration__wgSave = lambda: True
+    cfg._WireguardConfiguration__wgSave = lambda: (True, None)
     configs = {cfg.Name: cfg}
     settings = SimpleNamespace(GetConfig=lambda *_: (True, 'sqlite'))
     with patch('modules.PeerJobs.ConnectionString', return_value='sqlite:///'+tmp+'/jobs.db'), patch('modules.PeerJobLogger.ConnectionString', return_value='sqlite:///'+tmp+'/logs.db'):

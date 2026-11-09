@@ -33,6 +33,7 @@ with tempfile.TemporaryDirectory() as tmp:
     cfg = object.__new__(WireguardConfiguration)
     cfg.Name = "wg0"
     cfg.Protocol = "wg"
+    cfg.Address = "10.0.0.1/24"
     cfg.engine = engine
     cfg.peersTable = active
     cfg.peersRestrictedTable = restricted
@@ -40,19 +41,19 @@ with tempfile.TemporaryDirectory() as tmp:
     cfg.getStatus = lambda: True
     cfg.getPeers = lambda: None
     cfg.getRestrictedPeers = lambda: None
-    cfg._WireguardConfiguration__wgSave = lambda: True
+    cfg._WireguardConfiguration__wgSave = lambda: (True, None)
 
-    with patch("modules.WireguardConfiguration.subprocess.check_output") as command:
+    with patch("modules.WireguardConfiguration.CheckPeerKey", return_value=True), patch("modules.WireguardConfiguration.subprocess.check_output") as command:
         success, message = cfg.allowAccessPeers(["old_duplicate"])
         assert success, message
-        command.assert_not_called()
+        command.assert_called_once()
 
     with engine.connect() as db:
         retained = db.execute(sa.select(active).where(active.c.id == "old_duplicate")).mappings().one()
         assert retained["name"] == "fresh-active"
         assert db.execute(sa.select(restricted).where(restricted.c.id == "old_duplicate")).first() is None
 
-    with patch("modules.WireguardConfiguration.subprocess.check_output") as command:
+    with patch("modules.WireguardConfiguration.CheckPeerKey", return_value=True), patch("modules.WireguardConfiguration.subprocess.check_output") as command:
         success, message = cfg.restrictPeers(["reset_peer"])
         assert success, message
         command.assert_called_once()

@@ -43,6 +43,22 @@ class NormalizeDefault(ast.NodeTransformer):
             node.args.pop()
         return node
 for name,node in a.items():
+    # Reviewed consistency fix: only the listed bot operations gain a lock.
+    # The URL decorators, arguments and original validation remain identical.
+    candidate = b[name]
+    locks = [d for d in candidate.decorator_list if isinstance(d, ast.Call)
+             and isinstance(d.func, ast.Name) and d.func.id == "locked_configuration_route"]
+    if locks:
+        assert name in {"API_addPeers", "API_resetPeerData", "API_updatePeerSettings"}
+        assert len(locks) == 1 and ast.unparse(locks[0]) == "locked_configuration_route(WireguardConfigurations)"
+        candidate.decorator_list.remove(locks[0])
+    if name == "API_resetPeerData":
+        assert ast.dump(node.args) == ast.dump(candidate.args)
+        assert [ast.dump(d) for d in node.decorator_list] == [ast.dump(d) for d in candidate.decorator_list]
+        assert [ast.dump(x) for x in node.body[:7]] == [ast.dump(x) for x in candidate.body[:7]]
+        expected = ast.parse("resetStatus, message = wgc.resetPeerData(id, type)\nreturn ResponseObject(status=resetStatus, message=message if not resetStatus else None)")
+        assert [ast.dump(x) for x in candidate.body[7:]] == [ast.dump(x) for x in expected.body]
+        continue
     if name=="API_allowAccessPeersLegacy":
         # Reviewed legacy compatibility shim only. The original upstream
         # /api/allowAccessPeers/<configName> remains AST-identical and all
@@ -73,4 +89,4 @@ for name,node in a.items():
     rhs=ast.dump(NormalizeDefault().visit(b[name]) if name=="API_addPeers" else b[name],
                  include_attributes=False)
     assert lhs==rhs, "Existing API route modified: "+name
-print("PASS: existing bot routes unchanged; only reviewed allow-access alias is permitted")
+print("PASS: bot URLs/fields preserved; reviewed reset failure propagation and operation locks permitted")

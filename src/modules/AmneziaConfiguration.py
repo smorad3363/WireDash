@@ -7,6 +7,7 @@ from .PeerJobs import PeerJobs
 from .AmneziaPeer import AmneziaPeer
 from .PeerShareLinks import PeerShareLinks
 from .Utilities import RegexMatch, CheckAddress, CheckPeerKey
+from .PeerState import locked_peer_state
 from .WireguardConfiguration import WireguardConfiguration
 from .DashboardWebHooks import DashboardWebHooks
 
@@ -156,164 +157,16 @@ class AmneziaConfiguration(WireguardConfiguration):
 
         self.metadata.create_all(self.engine)
 
+    def _peer_type(self):
+        return AmneziaPeer
+
     def getPeers(self):
-        cached = {p.id: p for p in self.Peers}
-        self.Peers.clear()
-        if self.configurationFileChanged():
-            with open(self.configPath, 'r') as configFile:
-                p = []
-                pCounter = -1
-                content = configFile.read().split('\n')
-                try:
-                    if "[Peer]" not in content:
-                        current_app.logger.info(f"{self.Name} config has no [Peer] section")
-                        return
-
-                    peerStarts = content.index("[Peer]")
-                    content = content[peerStarts:]
-                    for i in content:
-                        if not RegexMatch("#(.*)", i) and not RegexMatch(";(.*)", i):
-                            if i == "[Peer]":
-                                pCounter += 1
-                                p.append({})
-                                p[pCounter]["name"] = ""
-                            else:
-                                if len(i) > 0:
-                                    split = re.split(r'\s*=\s*', i, 1)
-                                    if len(split) == 2:
-                                        p[pCounter][split[0]] = split[1]
-
-                        if RegexMatch("#Name# = (.*)", i):
-                            split = re.split(r'\s*=\s*', i, 1)
-                            if len(split) == 2:
-                                p[pCounter]["name"] = split[1]
-                    with self.engine.begin() as conn:
-                        for i in p:
-                            if "PublicKey" in i.keys():
-                                tempPeer = conn.execute(self.peersTable.select().where(
-                                    self.peersTable.columns.id == i['PublicKey']
-                                )).mappings().fetchone()
-                                if tempPeer is None:
-                                    tempPeer = {
-                                        "id": i['PublicKey'],
-                                        "private_key": "",
-                                        "DNS": self.DashboardConfig.GetConfig("Peers", "peer_global_DNS")[1],
-                                        "endpoint_allowed_ip": self.DashboardConfig.GetConfig("Peers", "peer_endpoint_allowed_ip")[1],
-                                        "name": i.get("name"),
-                                        "total_receive": 0,
-                                        "total_sent": 0,
-                                        "total_data": 0,
-                                        "endpoint": "N/A",
-                                        "status": "stopped",
-                                        "latest_handshake": "N/A",
-                                        "allowed_ip": i.get("AllowedIPs", "N/A"),
-                                        "cumu_receive": 0,
-                                        "cumu_sent": 0,
-                                        "cumu_data": 0,
-                                        "mtu": self.DashboardConfig.GetConfig("Peers", "peer_mtu")[1],
-                                        "keepalive": self.DashboardConfig.GetConfig("Peers", "peer_keep_alive")[1],
-                                        "notes": "",
-                                        "remote_endpoint": self.DashboardConfig.GetConfig("Peers", "remote_endpoint")[1],
-                                        "preshared_key": i["PresharedKey"] if "PresharedKey" in i.keys() else ""
-                                    }
-                                    conn.execute(
-                                        self.peersTable.insert().values(tempPeer)
-                                    )
-                                else:
-                                    conn.execute(
-                                        self.peersTable.update().values({
-                                            "allowed_ip": i.get("AllowedIPs", "N/A")
-                                        }).where(
-                                            self.peersTable.columns.id == i['PublicKey']
-                                        )
-                                    )
-                                self.Peers.append(AmneziaPeer(tempPeer, self))
-                except Exception as e:
-                    current_app.logger.error(f"{self.Name} getPeers() Error", e)
-        else:
-            with self.engine.connect() as conn:
-                existingPeers = conn.execute(self.peersTable.select()).mappings().fetchall()
-            for row in existingPeers:
-                peer = cached.get(row["id"])
-                if peer is None:
-                    peer = AmneziaPeer(row, self)
-                else:
-                    peer.refreshFromRow(row)
-                self.Peers.append(peer)
+        return super().getPeers()
 
     def addPeers(self, peers: list) -> tuple[bool, list, str]:
-        result = {
-            "message": None,
-            "peers": []
-        }
-        try:
-            cleanedAllowedIPs = {}
-            for p in peers:
-                newAllowedIPs = p['allowed_ip'].replace(" ", "")
-                if not CheckAddress(newAllowedIPs):
-                    return False, [], "Allowed IPs entry format is incorrect"
-                if not CheckPeerKey(p["id"]):
-                    return False, [], "Peer key format is incorrect"
-                cleanedAllowedIPs[p["id"]] = newAllowedIPs
+        return super().addPeers(peers)
 
-            with self.engine.begin() as conn:
-                for i in peers:
-                    newPeer = {
-                        "id": i['id'],
-                        "private_key": i['private_key'],
-                        "DNS": i['DNS'],
-                        "endpoint_allowed_ip": i['endpoint_allowed_ip'],
-                        "name": i['name'],
-                        "total_receive": 0,
-                        "total_sent": 0,
-                        "total_data": 0,
-                        "endpoint": "N/A",
-                        "status": "stopped",
-                        "latest_handshake": "N/A",
-                        "allowed_ip": i.get("allowed_ip", "N/A"),
-                        "cumu_receive": 0,
-                        "cumu_sent": 0,
-                        "cumu_data": 0,
-                        "mtu": i['mtu'],
-                        "keepalive": i['keepalive'],
-                        "notes": i.get('notes', ''),
-                        "remote_endpoint": self.DashboardConfig.GetConfig("Peers", "remote_endpoint")[1],
-                        "preshared_key": i["preshared_key"]
-                    }
-                    conn.execute(
-                        self.peersTable.insert().values(newPeer)
-                    )
-            for p in peers:
-                presharedKeyExist = len(p['preshared_key']) > 0
-                rd = random.Random()
-                uid = str(uuid.UUID(int=rd.getrandbits(128), version=4))
-                if presharedKeyExist:
-                    with open(uid, "w+") as f:
-                        f.write(p['preshared_key'])
-
-                command = [self.Protocol, "set", self.Name, "peer", p['id'], "allowed-ips", cleanedAllowedIPs[p["id"]], "preshared-key", uid if presharedKeyExist else "/dev/null"]
-                subprocess.check_output(command, stderr=subprocess.STDOUT)
-
-                if presharedKeyExist:
-                    os.remove(uid)
-
-            command = [f"{self.Protocol}-quick", "save", self.Name]
-            subprocess.check_output(command, stderr=subprocess.STDOUT)
-
-            self.getPeers()
-            for p in peers:
-                p = self.searchPeer(p['id'])
-                if p[0]:
-                    result['peers'].append(p[1])
-            self.DashboardWebHooks.RunWebHook("peer_created", {
-                "configuration": self.Name,
-                "peers": list(map(lambda k : k['id'], peers))
-            })
-        except Exception as e:
-            current_app.logger.error("Add peers error", e)
-            return False, [], "Internal server error"
-        return True, result['peers'], ""
-
+    @locked_peer_state
     def getRestrictedPeers(self):
         with self.engine.connect() as conn:
             restricted = conn.execute(self.peersRestrictedTable.select()).mappings().fetchall()

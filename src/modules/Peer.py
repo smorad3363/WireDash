@@ -9,6 +9,7 @@ from datetime import timedelta
 
 import jinja2
 import sqlalchemy as db
+from .PeerState import locked_peer_state, PeerConfigurationError, address_networks
 from .PeerJob import PeerJob
 from  flask import current_app
 from .PeerShareLink import PeerShareLink
@@ -83,6 +84,7 @@ class Peer:
     def __repr__(self):
         return str(self.toJson())
 
+    @locked_peer_state
     def updatePeer(self, name: str,
                    private_key: str,
                    preshared_key: str,
@@ -114,8 +116,10 @@ class Peer:
             ips = [ip.strip() for ip in ips]
             used_allowed_ips.append(ips)
 
-        if allowed_ip in used_allowed_ips:
-            return False, "Allowed IP already taken by another peer"
+        valid, error = self.configuration.validatePeerAddresses([
+            {"id": self.id, "allowed_ip": allowed_ip}])
+        if not valid:
+            return False, error
 
         if not ValidateDNSAddress(dns_addresses):
             return False, f"DNS IP-Address or FQDN is incorrect"
@@ -186,7 +190,12 @@ class Peer:
             current_app.logger.error(f"Subprocess call failed:\n{exc.output.decode('UTF-8')}")
             return False, "Internal server error"
 
+    @locked_peer_state
     def downloadPeer(self) -> dict[str, str]:
+        if not address_networks(self.allowed_ip):
+            raise PeerConfigurationError("Peer has no valid assigned address; repair the stored lease before exporting")
+        if not self.private_key:
+            raise PeerConfigurationError("Peer private key is unavailable; restore the original customer record")
         final = {
             "fileName": "",
             "file": ""
@@ -294,6 +303,7 @@ class Peer:
     def getShareLink(self):
         self.ShareLink = self.configuration.AllPeerShareLinks.getLink(self.configuration.Name, self.id)
 
+    @locked_peer_state
     def resetDataUsage(self, mode: str):
         previous_receive = (self.total_receive or 0) + (self.cumu_receive or 0)
         previous_sent = (self.total_sent or 0) + (self.cumu_sent or 0)

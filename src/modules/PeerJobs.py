@@ -1,3 +1,4 @@
+from .PeerState import locked_configurations
 """
 Peer Jobs
 """
@@ -387,6 +388,7 @@ class PeerJobs:
         return self.JobLogger.getLogs(configurationName)
 
 
+    @locked_configurations
     def runJob(self):
         self.cleanJob()
         needToDelete = []
@@ -435,9 +437,7 @@ class PeerJobs:
                         elif job.Action == "delete":
                             s, msg = c.deletePeers([fp.id], self, self.AllPeerShareLinks)
                         elif job.Action == "reset_total_data_usage":
-                            s = fp.resetDataUsage("total")
-                            c.restrictPeers([fp.id])
-                            c.allowAccessPeers([fp.id])
+                            s, msg = c.resetPeerData(fp.id, "total")
                         if s is True:
                             self.JobLogger.log(job.JobID, s,
                                           f"Peer {fp.id} from {c.Name} is successfully {job.Action}ed."

@@ -30,6 +30,7 @@ from modules.PeerJobs import PeerJobs
 from modules.PeerLimits import parse_creation_limits
 from modules.BackupPanelBridge import backup_panel_call
 from urllib.parse import urlsplit
+from modules.PeerState import locked_configuration_route, PeerConfigurationError
 from modules.ConfigurationReadModel import configuration_info_payload, ui_configuration_page
 from modules.DashboardConfig import DashboardConfig
 from modules.WireguardConfiguration import WireguardConfiguration
@@ -80,6 +81,11 @@ app = Flask("WGDashboard",
             template_folder=os.path.abspath("./static/dist/WGDashboardAdmin"),
             static_folder=os.path.abspath("./static/dist/WGDashboardAdmin"),
             static_url_path=APP_PREFIX_INIT if APP_PREFIX_INIT else '')
+
+@app.errorhandler(PeerConfigurationError)
+def invalid_peer_configuration(error):
+    return ResponseObject(False, str(error), status_code=409)
+
 
 def peerInformationBackgroundThread():
     global WireguardConfigurations
@@ -861,6 +867,7 @@ def API_deleteDashboardAPIKey():
     return ResponseObject(False, "Dashboard API Keys function is disbaled")
     
 @app.post(f'{APP_PREFIX}/api/updatePeerSettings/<configName>')
+@locked_configuration_route(WireguardConfigurations)
 def API_updatePeerSettings(configName):
     data = request.get_json()
     id = data['id']
@@ -907,6 +914,7 @@ def API_updatePeerSettings(configName):
     return ResponseObject(False, "Peer does not exist")
 
 @app.post(f'{APP_PREFIX}/api/resetPeerData/<configName>')
+@locked_configuration_route(WireguardConfigurations)
 def API_resetPeerData(configName):
     data = request.get_json()
     id = data['id']
@@ -918,12 +926,8 @@ def API_resetPeerData(configName):
     if not foundPeer:
         return ResponseObject(False, "Configuration/Peer does not exist")
     
-    resetStatus = peer.resetDataUsage(type)
-    if resetStatus:
-        wgc.restrictPeers([id])
-        wgc.allowAccessPeers([id])
-    
-    return ResponseObject(status=resetStatus)
+    resetStatus, message = wgc.resetPeerData(id, type)
+    return ResponseObject(status=resetStatus, message=message if not resetStatus else None)
 
 @app.post(f'{APP_PREFIX}/api/deletePeers/<configName>')
 def API_deletePeers(configName: str) -> ResponseObject:
@@ -1104,6 +1108,7 @@ def API_allowAccessPeersLegacy() -> ResponseObject:
 
 
 @app.post(f'{APP_PREFIX}/api/addPeers/<configName>')
+@locked_configuration_route(WireguardConfigurations)
 def API_addPeers(configName):
     if configName in WireguardConfigurations.keys():
         data: dict = request.get_json()

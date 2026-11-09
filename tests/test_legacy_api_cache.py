@@ -22,6 +22,11 @@ def load_class(root, filename, name, namespace=None):
     node = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == name)
     module = ast.Module(body=[ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0), node], type_ignores=[])
     ns = dict(namespace or {})
+    spec = importlib.util.spec_from_file_location("peer_state_probes", root / "src/modules/PeerState.py")
+    state = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(state)
+    ns.update(locked_peer_state=state.locked_peer_state,
+              locked_configurations=state.locked_configurations)
     exec(compile(ast.fix_missing_locations(module), str(root / filename), "exec"), ns)
     return ns[name]
 

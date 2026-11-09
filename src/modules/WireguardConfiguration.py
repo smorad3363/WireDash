@@ -15,6 +15,8 @@ from flask import current_app
 from .DatabaseConnection import ConnectionString
 from .DashboardConfig import DashboardConfig
 from .Peer import Peer
+from .PeerState import (locked_peer_state, address_networks, addresses_overlap,
+                        preferred_peer_record)
 from .PeerJobs import PeerJobs
 from .PeerShareLinks import PeerShareLinks
 from .Utilities import StringToBoolean, \
@@ -368,6 +370,7 @@ class WireguardConfiguration:
             d.remove(self.Name)
             self.DashboardConfig.SetConfig("WireGuardConfiguration", "autostart", d)
 
+    @locked_peer_state
     def getRestrictedPeers(self):
         with self.engine.connect() as conn:
             restricted = conn.execute(self.peersRestrictedTable.select()).mappings().fetchall()
@@ -382,105 +385,113 @@ class WireguardConfiguration:
             peers.append(peer)
         self.RestrictedPeers = peers
 
+    @locked_peer_state
     def configurationFileChanged(self) :
         mt = os.path.getmtime(self.configPath)
         changed = self.__configFileModifiedTime is None or self.__configFileModifiedTime != mt
         self.__configFileModifiedTime = mt
         return changed
 
+    @locked_peer_state
     def getPeers(self):
-        tmpList = []        
+        # The DB owns assigned addresses, identity and traffic history. The
+        # config file can briefly lag a restrict/delete and wg showconf omits
+        # AllowedIPs when another peer has stolen the route. Never replace a
+        # valid lease with N/A or resurrect a restricted customer from a file.
         if self.configurationFileChanged():
-            with open(self.configPath, 'r') as configFile:
-                p = []
-                pCounter = -1
-                content = configFile.read().split('\n')
-                try:
-                    if "[Peer]" not in content:
-                        current_app.logger.info(f"{self.Name} config has no [Peer] section")
-                        self.Peers = []
-                        return
+            sections = []
+            current = None
+            with open(self.configPath) as config_file:
+                for raw in config_file:
+                    line = raw.strip()
+                    if line == "[Peer]":
+                        current = {}
+                        sections.append(current)
+                    elif line.startswith("["):
+                        current = None
+                    elif current is not None and "=" in line:
+                        key, value = (part.strip() for part in line.split("=", 1))
+                        if key == "#Name#":
+                            current["name"] = value
+                        elif not key.startswith(("#", ";")):
+                            current[key] = value
+            with self.engine.begin() as conn:
+                active = {r["id"]: r for r in conn.execute(
+                    self.peersTable.select()).mappings()}
+                restricted = {r["id"] for r in conn.execute(
+                    self.peersRestrictedTable.select()).mappings()}
+                deleted_table = getattr(self, "peersDeletedTable", None)
+                deleted = set() if deleted_table is None else {
+                    r["id"] for r in conn.execute(deleted_table.select()).mappings()}
+                occupied = self._lease_rows(conn)
+                for section in sections:
+                    key = section.get("PublicKey")
+                    address = section.get("AllowedIPs", "")
+                    if (not key or key in active or key in restricted or key in deleted
+                            or not address_networks(address)):
+                        continue
+                    if any(row["id"] != key and addresses_overlap(address, row["allowed_ip"])
+                           for row in occupied):
+                        continue
+                    row = {
+                        "id": key, "private_key": "",
+                        "DNS": self.DashboardConfig.GetConfig("Peers", "peer_global_DNS")[1],
+                        "endpoint_allowed_ip": self.DashboardConfig.GetConfig("Peers", "peer_endpoint_allowed_ip")[1],
+                        "name": section.get("name", ""),
+                        "total_receive": 0, "total_sent": 0, "total_data": 0,
+                        "endpoint": "N/A", "status": "stopped", "latest_handshake": "N/A",
+                        "allowed_ip": address,
+                        "cumu_receive": 0, "cumu_sent": 0, "cumu_data": 0,
+                        "mtu": self.DashboardConfig.GetConfig("Peers", "peer_mtu")[1] or None,
+                        "keepalive": self.DashboardConfig.GetConfig("Peers", "peer_keep_alive")[1] or None,
+                        "notes": "",
+                        "remote_endpoint": self.DashboardConfig.GetConfig("Peers", "remote_endpoint")[1],
+                        "preshared_key": section.get("PresharedKey", "")}
+                    conn.execute(self.peersTable.insert().values(row))
+                    occupied.append(row)
+                    active[key] = row
+        with self.engine.connect() as conn:
+            existingPeers = conn.execute(self.peersTable.select()).mappings().fetchall()
+        cached = {p.id: p for p in self.Peers}
+        peers = []
+        peer_type = self._peer_type()
+        for row in existingPeers:
+            peer = cached.get(row["id"])
+            if peer is None:
+                peer = peer_type(row, self)
+            else:
+                peer.refreshFromRow(row)
+            peers.append(peer)
+        self.Peers = peers
 
-                    peerStarts = content.index("[Peer]")
-                    content = content[peerStarts:]
-                    for i in content:
-                        if not RegexMatch("#(.*)", i) and not RegexMatch(";(.*)", i):
-                            if i == "[Peer]":
-                                pCounter += 1
-                                p.append({})
-                                p[pCounter]["name"] = ""
-                            else:
-                                if len(i) > 0:
-                                    split = re.split(r'\s*=\s*', i, 1)
-                                    if len(split) == 2:
-                                        p[pCounter][split[0]] = split[1]
+    def _peer_type(self):
+        return Peer
 
-                        if RegexMatch("#Name# = (.*)", i):
-                            split = re.split(r'\s*=\s*', i, 1)
-                            if len(split) == 2:
-                                p[pCounter]["name"] = split[1]
-                    
-                    for i in p:
-                        if "PublicKey" in i.keys():
-                            with self.engine.connect() as conn:
-                                tempPeer = conn.execute(
-                                    self.peersTable.select().where(
-                                        self.peersTable.columns.id == i['PublicKey']
-                                    )
-                                ).mappings().fetchone()
-                            
-                            if tempPeer is None:
-                                tempPeer = {
-                                    "id": i['PublicKey'],
-                                    "private_key": "",
-                                    "DNS": self.DashboardConfig.GetConfig("Peers", "peer_global_DNS")[1],
-                                    "endpoint_allowed_ip": self.DashboardConfig.GetConfig("Peers", "peer_endpoint_allowed_ip")[1],
-                                    "name": i.get("name"),
-                                    "total_receive": 0,
-                                    "total_sent": 0,
-                                    "total_data": 0,
-                                    "endpoint": "N/A",
-                                    "status": "stopped",
-                                    "latest_handshake": "N/A",
-                                    "allowed_ip": i.get("AllowedIPs", "N/A"),
-                                    "cumu_receive": 0,
-                                    "cumu_sent": 0,
-                                    "cumu_data": 0,
-                                    "mtu": self.DashboardConfig.GetConfig("Peers", "peer_mtu")[1] if len(self.DashboardConfig.GetConfig("Peers", "peer_mtu")[1]) > 0 else None,
-                                    "keepalive": self.DashboardConfig.GetConfig("Peers", "peer_keep_alive")[1] if len(self.DashboardConfig.GetConfig("Peers", "peer_keep_alive")[1]) > 0 else None,
-                                    "notes": "",
-                                    "remote_endpoint": self.DashboardConfig.GetConfig("Peers", "remote_endpoint")[1],
-                                    "preshared_key": i["PresharedKey"] if "PresharedKey" in i.keys() else ""
-                                }
-                                with self.engine.begin() as conn:
-                                    conn.execute(
-                                        self.peersTable.insert().values(tempPeer)
-                                    )                                    
-                            else:
-                                with self.engine.begin() as conn:
-                                    conn.execute(
-                                        self.peersTable.update().values({
-                                            "allowed_ip": i.get("AllowedIPs", "N/A")
-                                        }).where(
-                                            self.peersTable.columns.id == i['PublicKey']
-                                        )
-                                    )
-                            tmpList.append(Peer(tempPeer, self))
-                except Exception as e:
-                    current_app.logger.error(f"{self.Name} getPeers() Error", e)
-        else:
-            with self.engine.connect() as conn:
-                existingPeers = conn.execute(self.peersTable.select()).mappings().fetchall()
-            cached = {p.id: p for p in self.Peers}
-            for row in existingPeers:
-                peer = cached.get(row["id"])
-                if peer is None:
-                    peer = Peer(row, self)
-                else:
-                    peer.refreshFromRow(row)
-                tmpList.append(peer)
-        self.Peers = tmpList
-    
+    def _lease_rows(self, conn):
+        return [dict(row) for table in (self.peersTable, self.peersRestrictedTable)
+                for row in conn.execute(table.select()).mappings()]
+
+    @locked_peer_state
+    def validatePeerAddresses(self, peers):
+        with self.engine.connect() as conn:
+            occupied = self._lease_rows(conn)
+        staged = []
+        for peer in peers:
+            address = peer.get("allowed_ip", "")
+            networks = address_networks(address)
+            if not networks:
+                return False, "Allowed IPs entry format is incorrect"
+            for server in self.Address.split(","):
+                if server.strip():
+                    host = ipaddress.ip_interface(server.strip()).ip
+                    if any(host.version == n.version and host in n for n in networks):
+                        return False, "Allowed IP overlaps the server address"
+            if any(row["id"] != peer["id"] and addresses_overlap(address, row["allowed_ip"])
+                   for row in occupied + staged):
+                return False, "Allowed IP already assigned to another peer"
+            staged.append(peer)
+        return True, None
+
     def logPeersTraffic(self):
         # The peer table is the authoritative cumulative traffic ledger.
         # History rows are for charts only, so record at most one sample per
@@ -533,78 +544,52 @@ class WireguardConfiguration:
                                 })
                             )
                           
+    @locked_peer_state
     def addPeers(self, peers: list) -> tuple[bool, list, str]:
-        result = {
-            "message": None,
-            "peers": []
-        }
+        valid, error = self.validatePeerAddresses(peers)
+        if not valid:
+            return False, [], error
+        with self.engine.connect() as conn:
+            existing = {row["id"] for row in self._lease_rows(conn)}
+        keys = [row["id"] for row in peers]
+        if len(set(keys)) != len(keys) or any(key in existing for key in keys):
+            return False, [], "This peer already exists"
+        if any(not CheckPeerKey(key) for key in keys):
+            return False, [], "Peer key format is incorrect"
+        installed = []
         try:
-            cleanedAllowedIPs = {}
-            for p in peers:
-                newAllowedIPs = p['allowed_ip'].replace(" ", "")
-                if not CheckAddress(newAllowedIPs):
-                    return False, [], "Allowed IPs entry format is incorrect"
-                if not CheckPeerKey(p["id"]):
-                    return False, [], "Peer key format is incorrect"
-                cleanedAllowedIPs[p["id"]] = newAllowedIPs
-
             with self.engine.begin() as conn:
-                for i in peers:
-                    newPeer = {
-                        "id": i['id'],
-                        "private_key": i['private_key'],
-                        "DNS": i['DNS'],
-                        "endpoint_allowed_ip": i['endpoint_allowed_ip'],
-                        "name": i['name'],
-                        "total_receive": 0,
-                        "total_sent": 0,
-                        "total_data": 0,
-                        "endpoint": "N/A",
-                        "status": "stopped",
-                        "latest_handshake": "N/A",
-                        "allowed_ip": i.get("allowed_ip", "N/A"),
-                        "cumu_receive": 0,
-                        "cumu_sent": 0,
-                        "cumu_data": 0,
-                        "mtu": i['mtu'],
-                        "keepalive": i['keepalive'],
-                        "notes": i.get("notes", ""),
-                        "remote_endpoint": self.DashboardConfig.GetConfig("Peers", "remote_endpoint")[1],
-                        "preshared_key": i["preshared_key"]
-                    }
-                    conn.execute(
-                        self.peersTable.insert().values(newPeer)
-                    )
-            for p in peers:
-                presharedKeyExist = len(p['preshared_key']) > 0
-                rd = random.Random()
-                uid = str(uuid.UUID(int=rd.getrandbits(128), version=4))
-                if presharedKeyExist:
-                    with open(uid, "w+") as f:
-                        f.write(p['preshared_key'])
-
-                command = [self.Protocol, "set", self.Name, "peer", p['id'], "allowed-ips", cleanedAllowedIPs[p["id"]], "preshared-key", uid if presharedKeyExist else "/dev/null"]
-                subprocess.check_output(command, stderr=subprocess.STDOUT)
-
-                if presharedKeyExist:
-                    os.remove(uid)
-
-            command = [f"{self.Protocol}-quick", "save", self.Name]
-            subprocess.check_output(command, stderr=subprocess.STDOUT)
-
-            self.getPeers()
-            for p in peers:
-                p = self.searchPeer(p['id'])
-                if p[0]:
-                    result['peers'].append(p[1])
-            self.DashboardWebHooks.RunWebHook("peer_created", {
-                "configuration": self.Name,
-                "peers": list(map(lambda k : k['id'], peers))
-            })
-        except Exception as e:
-            current_app.logger.error("Add peers error", e)
-            return False, [], "Internal server error"
-        return True, result['peers'], ""
+                for peer in peers:
+                    row = dict(peer)
+                    for field in ("total_receive", "total_sent", "total_data",
+                                  "cumu_receive", "cumu_sent", "cumu_data"):
+                        row[field] = 0
+                    row.update(endpoint="N/A", status="stopped", latest_handshake="N/A",
+                               remote_endpoint=self.DashboardConfig.GetConfig("Peers", "remote_endpoint")[1])
+                    conn.execute(self.peersTable.insert().values(row))
+                    # Include the key in cleanup even if a command partly succeeds.
+                    installed.append(peer["id"])
+                    self._set_peer_route(row)
+                status, message = self.__wgSave()
+                if not status:
+                    raise RuntimeError("Could not save new peers")
+        except Exception:
+            for key in installed:
+                try:
+                    subprocess.check_output([self.Protocol, "set", self.Name, "peer", key, "remove"],
+                                            stderr=subprocess.STDOUT)
+                except subprocess.CalledProcessError:
+                    current_app.logger.error("Could not remove a partially created peer")
+            self.__wgSave()
+            current_app.logger.error("Peer provisioning failed; database transaction rolled back")
+            return False, [], "Could not create peer; changes rolled back"
+        self.getPeers()
+        result = [self.searchPeer(key)[1] for key in keys]
+        try:
+            self.DashboardWebHooks.RunWebHook("peer_created", {"configuration": self.Name, "peers": keys})
+        except Exception:
+            current_app.logger.error("Peer created; webhook delivery failed")
+        return True, result, ""
 
     def searchPeer(self, publicKey):
         for i in self.Peers:
@@ -612,63 +597,91 @@ class WireguardConfiguration:
                 return True, i
         return False, None
 
+    @locked_peer_state
     def allowAccessPeers(self, listOfPublicKeys) -> tuple[bool, str]:
+        staged = []
+        with self.engine.connect() as conn:
+            for key in dict.fromkeys(listOfPublicKeys):
+                active = conn.execute(self.peersTable.select().where(
+                    self.peersTable.c.id == key)).mappings().first()
+                restricted = conn.execute(self.peersRestrictedTable.select().where(
+                    self.peersRestrictedTable.c.id == key)).mappings().first()
+                if active is None and restricted is None:
+                    return False, "Peer does not exist"
+                row = preferred_peer_record(active, restricted)
+                if not CheckPeerKey(row["id"]):
+                    return False, "Peer key format is incorrect"
+                staged.append(row)
+        valid, error = self.validatePeerAddresses(staged)
+        if not valid:
+            return False, error
         if not self.getStatus():
             self.toggleConfiguration()
-        with self.engine.begin() as conn:
-            for i in listOfPublicKeys:
-                stmt = self.peersRestrictedTable.select().where(
-                    self.peersRestrictedTable.columns.id == i
-                )
-                restrictedPeer = conn.execute(stmt).mappings().fetchone()
-                if restrictedPeer is not None:
-                    # Interrupted renewals may leave a stale restricted copy of
-                    # an already-active peer. Keep the active row authoritative
-                    # instead of trying to insert a duplicate primary key.
-                    if conn.execute(self.peersTable.select().where(
-                        self.peersTable.columns.id == i
-                    )).first() is not None:
-                        conn.execute(self.peersRestrictedTable.delete().where(
-                            self.peersRestrictedTable.columns.id == i
-                        ))
-                        continue
-                    conn.execute(
-                        self.peersTable.insert().from_select(
-                            [c.name for c in self.peersTable.columns],
-                            stmt
-                        )
-                    )
-                    conn.execute(
-                        self.peersRestrictedTable.delete().where(
-                            self.peersRestrictedTable.columns.id == i
-                        )
-                    )
-
-                    presharedKeyExist = len(restrictedPeer['preshared_key']) > 0
-                    rd = random.Random()
-                    uid = str(uuid.UUID(int=rd.getrandbits(128), version=4))
-                    if presharedKeyExist:
-                        with open(uid, "w+") as f:
-                            f.write(restrictedPeer['preshared_key'])
-
-                    newAllowedIPs = restrictedPeer['allowed_ip'].replace(" ", "")
-                    if not CheckAddress(newAllowedIPs):
-                        return False, "Allowed IPs entry format is incorrect"
-
-                    if not CheckPeerKey(restrictedPeer["id"]):
-                        return False, "Peer key format is incorrect"
-
-                    command = [self.Protocol, "set", self.Name, "peer", restrictedPeer["id"], "allowed-ips", newAllowedIPs, "preshared-key", uid if presharedKeyExist else "/dev/null"]
-                    subprocess.check_output(command, stderr=subprocess.STDOUT)
-
-                    if presharedKeyExist: os.remove(uid)
+        for row in staged:
+            # Reapply the real WireGuard route even on retries. A DB row alone
+            # does not prove the peer was restored in the kernel.
+            self._set_peer_route(row)
+            with self.engine.begin() as conn:
+                present = conn.execute(self.peersTable.select().where(
+                    self.peersTable.c.id == row["id"])).first()
+                if present is None:
+                    conn.execute(self.peersTable.insert().values(row))
                 else:
-                    return False, "Failed to allow access of peer " + i
-        if not self.__wgSave():
-            return False, "Failed to save configuration through WireGuard"
+                    conn.execute(self.peersTable.update().where(
+                        self.peersTable.c.id == row["id"]).values(row))
+                conn.execute(self.peersRestrictedTable.delete().where(
+                    self.peersRestrictedTable.c.id == row["id"]))
+        status, message = self.__wgSave()
+        if not status:
+            return False, message
         self.getPeers()
+        self.getRestrictedPeers()
         return True, "Allow access successfully"
 
+    def _set_peer_route(self, row):
+        import tempfile
+        # A private PSK file is never left behind on a subprocess failure.
+        with tempfile.TemporaryDirectory(prefix="wiredash-peer-") as directory:
+            psk_path = "/dev/null"
+            if row.get("preshared_key"):
+                psk_path = os.path.join(directory, "psk")
+                fd = os.open(psk_path, os.O_WRONLY | os.O_CREAT, 0o600)
+                with os.fdopen(fd, "w") as handle:
+                    handle.write(row["preshared_key"])
+            subprocess.check_output([
+                self.Protocol, "set", self.Name, "peer", row["id"],
+                "allowed-ips", row["allowed_ip"].replace(" ", ""),
+                "preshared-key", psk_path], stderr=subprocess.STDOUT)
+
+    @locked_peer_state
+    def resetPeerData(self, key, mode):
+        if mode not in ("total", "receive", "sent"):
+            return False, "Invalid usage reset mode"
+        found, peer = self.searchPeer(key)
+        if not found:
+            return False, "Configuration/Peer does not exist"
+        valid, error = self.validatePeerAddresses([{"id": key, "allowed_ip": peer.allowed_ip}])
+        if not valid:
+            return False, error
+        # Sample and remove the old kernel counters before clearing the DB.
+        # The poller cannot recreate a row between restrict and allow.
+        self.getPeersTransfer()
+        status, message = self.restrictPeers([key])
+        if not status:
+            return False, message
+        with self.engine.begin() as conn:
+            row = conn.execute(self.peersRestrictedTable.select().where(
+                self.peersRestrictedTable.c.id == key)).mappings().one()
+            conn.execute(self.peersTable.insert().values(dict(row)))
+            conn.execute(self.peersRestrictedTable.delete().where(
+                self.peersRestrictedTable.c.id == key))
+        self.getPeers()
+        found, peer = self.searchPeer(key)
+        if not peer.resetDataUsage(mode):
+            return False, "Could not reset peer usage"
+        return self.allowAccessPeers([key])
+
+    @locked_peer_state
     def restrictPeers(self, listOfPublicKeys) -> tuple[bool, str]:
         numOfRestrictedPeers = 0
         numOfFailedToRestrictPeers = 0
@@ -686,17 +699,14 @@ class WireguardConfiguration:
                         # Replace any stale restricted duplicate in the SAME
                         # transaction, using the current active peer record.
                         # This keeps quota-reset and subsequent allow idempotent.
+                        active = conn.execute(self.peersTable.select().where(
+                            self.peersTable.c.id == pf.id)).mappings().first()
+                        restricted = conn.execute(self.peersRestrictedTable.select().where(
+                            self.peersRestrictedTable.c.id == pf.id)).mappings().first()
+                        record = preferred_peer_record(active, restricted)
                         conn.execute(self.peersRestrictedTable.delete().where(
-                            self.peersRestrictedTable.columns.id == pf.id
-                        ))
-                        conn.execute(
-                            self.peersRestrictedTable.insert().from_select(
-                                [c.name for c in self.peersTable.columns],
-                                self.peersTable.select().where(
-                                    self.peersTable.columns.id == pf.id
-                                )
-                            )
-                        )
+                            self.peersRestrictedTable.c.id == pf.id))
+                        conn.execute(self.peersRestrictedTable.insert().values(record))
                         conn.execute(
                             self.peersRestrictedTable.update().values({
                                 "status": "stopped"
@@ -714,7 +724,7 @@ class WireguardConfiguration:
                         traceback.print_stack()
                         numOfFailedToRestrictPeers += 1
 
-        if not self.__wgSave():
+        if not self.__wgSave()[0]:
             return False, "Failed to save configuration through WireGuard"
         self.getRestrictedPeers()
         self.getPeers()
@@ -723,6 +733,7 @@ class WireguardConfiguration:
         return False, f"Restricted {numOfRestrictedPeers} peer(s) successfully. Failed to restrict {numOfFailedToRestrictPeers} peer(s)"
 
 
+    @locked_peer_state
     def deletePeers(self, listOfPublicKeys, AllPeerJobs: PeerJobs, AllPeerShareLinks: PeerShareLinks) -> tuple[bool, str]:
         """Remove allowed AND already restricted peers via the unchanged API.
 
@@ -759,6 +770,8 @@ class WireguardConfiguration:
                         table.delete().where(table.c.id == peer.id))
                     if removed.rowcount != 1:
                         raise RuntimeError("Selected peer is no longer in the expected table")
+                    other = self.peersRestrictedTable if allowed else self.peersTable
+                    conn.execute(other.delete().where(other.c.id == peer.id))
                 if allowed:
                     active_changed = True
                 # Policy/share cleanup happens AFTER successful peer deletion.
@@ -772,7 +785,7 @@ class WireguardConfiguration:
                 current_app.logger.exception("Could not delete selected peer")
                 failed += 1
         # Save WireGuard only if a live peer was actually removed.
-        if active_changed and not self.__wgSave():
+        if active_changed and not self.__wgSave()[0]:
             return False, "Could not save WireGuard configuration after deletion"
         if deleted:
             AllPeerJobs.forget_weights(self.Name, deleted)
@@ -798,6 +811,7 @@ class WireguardConfiguration:
             current_app.logger.error(f"Failed to process command:\n{str(e)}")
             return False, "Internal server error"
 
+    @locked_peer_state
     def getPeersLatestHandshake(self):
         if not self.getStatus():
             self.toggleConfiguration()
@@ -838,6 +852,7 @@ class WireguardConfiguration:
                     )
                 count += 2
 
+    @locked_peer_state
     def getPeersTransfer(self):
         if not self.getStatus():
             self.toggleConfiguration()
@@ -907,6 +922,7 @@ class WireguardConfiguration:
 
             
 
+    @locked_peer_state
     def getPeersEndpoint(self):
         if not self.getStatus():
             self.toggleConfiguration()
@@ -1160,13 +1176,16 @@ class WireguardConfiguration:
             return False, "Internal server error"
         return True, None
 
+    @locked_peer_state
     def getNumberOfAvailableIP(self):
         if len(self.Address) < 0:
             return False, None
         existedAddress = set()
         availableAddress = {}
-        for p in self.Peers + self.getRestrictedPeersList():
-            peerAllowedIP = p.allowed_ip.split(',')
+        with self.engine.connect() as conn:
+            leases = self._lease_rows(conn)
+        for p in leases:
+            peerAllowedIP = (p["allowed_ip"] or "").split(',')
             for pip in peerAllowedIP:
                 # Legacy restricted peers can have N/A instead of an IP.
                 # Skip the placeholder without noisy exception logging.
@@ -1178,7 +1197,7 @@ class WireguardConfiguration:
                         check = ipaddress.ip_network(ppip[0])
                         existedAddress.add(check)
                     except Exception as e:
-                        current_app.logger.warning("%s peer %s has invalid IP; ignoring entry", self.Name, p.id)
+                        current_app.logger.warning("%s has an invalid stored peer address", self.Name)
         configurationAddresses = self.Address.split(',')
         for ca in configurationAddresses:
             ca = ca.strip()
@@ -1195,13 +1214,16 @@ class WireguardConfiguration:
                 current_app.logger.warning("Failed to parse IP address %s from %s: %s", ca, self.Name, e)
         return True, availableAddress
 
+    @locked_peer_state
     def getAvailableIP(self, threshold = 255):
         if len(self.Address) < 0:
             return False, None
         existedAddress = set()
         availableAddress = {}
-        for p in self.Peers + self.getRestrictedPeersList():
-            peerAllowedIP = p.allowed_ip.split(',')
+        with self.engine.connect() as conn:
+            leases = self._lease_rows(conn)
+        for p in leases:
+            peerAllowedIP = (p["allowed_ip"] or "").split(',')
             for pip in peerAllowedIP:
                 # Legacy restricted peers can have N/A instead of an IP.
                 # Skip the placeholder without noisy exception logging.
@@ -1213,7 +1235,7 @@ class WireguardConfiguration:
                         check = ipaddress.ip_network(ppip[0])
                         existedAddress.add(check.compressed)
                     except Exception as e:
-                        current_app.logger.warning("%s peer %s has invalid IP; ignoring entry", self.Name, p.id)
+                        current_app.logger.warning("%s has an invalid stored peer address", self.Name)
         configurationAddresses = self.Address.split(',')
         for ca in configurationAddresses:
             ca = ca.strip()

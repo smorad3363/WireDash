@@ -40,6 +40,15 @@ jobs:
           push: true
           tags: |
             ghcr.io/smorad3363/wiredash:sha-${{ github.sha }}
+      - name: Peer addresses, stale file and concurrent renewal regression
+        run: |
+          docker run --rm --network none --read-only \
+            --tmpfs /tmp:rw,nosuid,nodev,size=64m \
+            -v "$PWD/tests:/tests:ro" \
+            -e PYTHONPATH=/opt/wgdashboard/src \
+            -w /opt/wgdashboard/src \
+            --entrypoint /opt/wgdashboard/src/venv/bin/python3 ghcr.io/smorad3363/wiredash:sha-${{ github.sha }} \
+            /tests/test_peer_state_runtime.py
       - name: Verify stale peer renew recovery in the built image
         run: |
           docker run --rm --network none --read-only \

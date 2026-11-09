@@ -40,7 +40,7 @@ with tempfile.TemporaryDirectory() as tmp:
     cfg.getPeers=lambda:None
     cfg.getRestrictedPeers=lambda:None
     cfg.getStatus=lambda:True
-    cfg._WireguardConfiguration__wgSave=lambda:True
+    cfg._WireguardConfiguration__wgSave=lambda:(True, None)
     cfg.DashboardWebHooks=Hooks()
     jobs=Jobs();links=Links()
     with patch("modules.WireguardConfiguration.subprocess.check_output") as cmd:
