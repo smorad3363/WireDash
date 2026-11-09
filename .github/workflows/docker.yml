@@ -70,7 +70,7 @@ jobs:
             /tests/test_peer_overlap_runtime.py
       - name: Speed policy, persistence, renewal history and private authorization
         run: |
-          for test in test_speed_policy test_speed_store test_speed_ui test_speed_history test_speed_scale; do
+          for test in test_speed_policy test_speed_store test_speed_ui test_speed_history test_speed_scale test_renewal_effective_expiry; do
             docker run --rm --network none --read-only --tmpfs /tmp:rw,size=128m \
               -v "$PWD:/candidate:ro" -w /candidate \
               --entrypoint /opt/wgdashboard/src/venv/bin/python3 \

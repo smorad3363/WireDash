@@ -235,9 +235,8 @@ class PeerJobs:
                 if after:
                     previous = [j for j in self.getAllJobs(Job.Configuration)
                                 if j.Peer == Job.Peer and j.Field == 'date' and j.Action == 'restrict' and j.Operator == 'lgt']
-                    same = [j for j in previous if j.JobID == Job.JobID]
-                    old = (same or sorted(previous, key=lambda j: str(j.CreationDate), reverse=True))
-                    before = utc_naive(old[0].Value, local=True) if old else None
+                    from .PeerRenewalHistory import expiry_transition
+                    before, after = expiry_transition(previous, Job)
                     if before != after:
                         candidates=list(configuration.getPeersList())+list(configuration.getRestrictedPeersList())
                         peer=next((p for p in candidates if p.id==Job.Peer),None)
