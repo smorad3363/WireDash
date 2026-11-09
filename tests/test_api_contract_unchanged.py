@@ -46,12 +46,13 @@ for name,node in a.items():
     # Reviewed consistency fix: only the listed bot operations gain a lock.
     # The URL decorators, arguments and original validation remain identical.
     candidate = b[name]
-    locks = [d for d in candidate.decorator_list if isinstance(d, ast.Call)
-             and isinstance(d.func, ast.Name) and d.func.id == "locked_configuration_route"]
-    if locks:
-        assert name in {"API_addPeers", "API_resetPeerData", "API_updatePeerSettings"}
-        assert len(locks) == 1 and ast.unparse(locks[0]) == "locked_configuration_route(WireguardConfigurations)"
-        candidate.decorator_list.remove(locks[0])
+    for route in (node, candidate):
+        locks = [d for d in route.decorator_list if isinstance(d, ast.Call)
+                 and isinstance(d.func, ast.Name) and d.func.id == "locked_configuration_route"]
+        if locks:
+            assert name in {"API_addPeers", "API_resetPeerData", "API_updatePeerSettings"}
+            assert len(locks) == 1 and ast.unparse(locks[0]) == "locked_configuration_route(WireguardConfigurations)"
+            route.decorator_list.remove(locks[0])
     if name == "API_resetPeerData":
         assert ast.dump(node.args) == ast.dump(candidate.args)
         assert [ast.dump(d) for d in node.decorator_list] == [ast.dump(d) for d in candidate.decorator_list]
