@@ -217,6 +217,9 @@ fetch() {
   [[ -s "$dest" ]] || die "empty release asset: $rel"
 }
 fetch deploy/compose.yaml "$STAGE/compose.yaml"
+fetch deploy/wg-port-sync.py "$STAGE/wg-port-sync.py"
+fetch deploy/wgd-wg-port-sync.service "$STAGE/wgd-wg-port-sync.service"
+fetch deploy/wgd-wg-port-sync.timer "$STAGE/wgd-wg-port-sync.timer"
 fetch deploy/wgdashbackup.sh "$STAGE/wgdashbackup.sh"
 fetch deploy/wgdashbackup-panel-agent.py "$STAGE/wgdashbackup-panel-agent.py"
 fetch deploy/wgdashbackup_import.py "$STAGE/wgdashbackup_import.py"
@@ -281,7 +284,7 @@ elif exists && ((UPGRADE)); then
   log 'Upgrading managed deployment; preserving .env and volume names'
 elif ! exists; then
   install -m 600 "$STAGE/compose.yaml" "$COMPOSE"
-  printf 'WGD_PORT=%s\nWGD_TZ=%s\nWGD_PANEL_BIND=%s\nWGD_WG_MTU=%s\n' "$PORT" "$TZ" "$BIND" "$WG_MTU" > "$DEST/.env"
+  printf 'WGD_PORT=%s\nWGD_TZ=%s\nWGD_PANEL_BIND=%s\nWGD_WG_MTU=%s\nWGD_WG_PUBLIC_PORT=%s\nWGD_WG_LISTEN_PORT=%s\n' "$PORT" "$TZ" "$BIND" "$WG_MTU" 51820 51820 > "$DEST/.env"
 else
   log 'already done: compose retained'
 fi
@@ -361,6 +364,56 @@ i=found[0]
 lines[i]=re.sub(r'^(    image:\s*).*(\r?\n)$',lambda m:m.group(1)+image+m.group(2),lines[i])
 path.write_text(''.join(lines))
 PY
+  fi
+fi
+# Managed upgrades must preserve the client-facing UDP port while following
+# the live wg0 ListenPort, which may differ after a dashboard port change.
+# The existing backups above provide rollback of Compose and .env.
+if ((UPGRADE)) && running; then
+  live_wg_port=$(docker exec "$CONTAINER" wg show wg0 listen-port 2>/dev/null || :)
+  published_wg_port=$(docker inspect -f '{{json .NetworkSettings.Ports}}' "$CONTAINER" | python3 -c '
+import json,sys
+ports=json.load(sys.stdin)
+udp={
+    int(binding["HostPort"])
+    for key,bindings in ports.items()
+    if key.endswith("/udp") and bindings
+    for binding in bindings
+    if ":" not in (binding.get("HostIp") or "0.0.0.0")
+    and (binding.get("HostPort") or "").isdigit()
+}
+print(next(iter(udp)) if len(udp)==1 else "")
+' 2>/dev/null || :)
+  if [[ "$live_wg_port" =~ ^[0-9]{1,5}$ ]] &&
+     ((10#$live_wg_port>=1 && 10#$live_wg_port<=65535)) &&
+     [[ "$published_wg_port" =~ ^[0-9]{1,5}$ ]] &&
+     ((10#$published_wg_port>=1 && 10#$published_wg_port<=65535)); then
+    python3 - "$DEST/.env" "$published_wg_port" "$live_wg_port" <<'PY'
+import pathlib,sys
+p=pathlib.Path(sys.argv[1])
+lines=[line for line in p.read_text().splitlines()
+       if not line.startswith(("WGD_WG_PUBLIC_PORT=","WGD_WG_LISTEN_PORT="))]
+lines += ["WGD_WG_PUBLIC_PORT="+sys.argv[2], "WGD_WG_LISTEN_PORT="+sys.argv[3]]
+p.write_text("\n".join(lines)+"\n")
+PY
+    # Replace only the exact legacy mapping; leave custom Compose mappings alone.
+    python3 - "$COMPOSE" <<'PY'
+import pathlib,re,sys
+p=pathlib.Path(sys.argv[1]); text=p.read_text()
+service=re.search(r"(?m)^  wgdashboard:[ \t]*$",text)
+if not service: raise SystemExit("wgdashboard service not found")
+following=re.search(r"(?m)^  [A-Za-z0-9_-]+:[ \t]*$",text[service.end():])
+end=service.end()+following.start() if following else len(text)
+section=text[service.end():end]
+old='      - "51820:51820/udp"'
+new='      - "${WGD_WG_PUBLIC_PORT:-51820}:${WGD_WG_LISTEN_PORT:-51820}/udp"'
+if section.count(old)==1:
+    text=text[:service.end()]+section.replace(old,new,1)+text[end:]
+    p.write_text(text)
+PY
+    log "WireGuard UDP published port=$published_wg_port; live wg0 listen port=$live_wg_port"
+  else
+    log 'WARNING: could not identify a unique live WireGuard UDP mapping; preserving existing Compose ports'
   fi
 fi
 # Explicit MTU overrides are persisted for existing managed installations.
@@ -524,6 +577,18 @@ assert re.search(r"(?mi)^\s*MTU\s*=\s*"+re.escape(sys.argv[1])+r"\s*$",interface
       die "wg0 live MTU verification failed (observed ${live_mtu:-no interface}, expected $WG_MTU); check WireGuard autostart"
     log "Verified wg0 live MTU=$WG_MTU and persistent /etc/wireguard/wg0.conf"
   fi
+fi
+# Docker's published UDP mapping can become stale after changing wg0's listen
+# port in the UI. Reconcile the exact WireDash host port and container target
+# without recreating the container or changing peers/API responses.
+install -d -m 0755 /usr/local/libexec
+install -m 0755 "$STAGE/wg-port-sync.py" /usr/local/libexec/wg-port-sync.py
+install -m 0644 "$STAGE/wgd-wg-port-sync.service" /etc/systemd/system/wgd-wg-port-sync.service
+install -m 0644 "$STAGE/wgd-wg-port-sync.timer" /etc/systemd/system/wgd-wg-port-sync.timer
+systemctl daemon-reload
+systemctl enable --now wgd-wg-port-sync.timer
+if ! systemctl start wgd-wg-port-sync.service; then
+  log 'WARNING: WireGuard Docker UDP port reconciliation failed; inspect journalctl -u wgd-wg-port-sync'
 fi
 # Docker Compose can recreate published-port NAT rules on upgrades. When GRE
 # Manager is present, refresh only its owned WireGuard UDP/51820 path.
