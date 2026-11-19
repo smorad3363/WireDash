@@ -1,0 +1,10 @@
+[Unit]
+Description=Recheck WireDash UDP port when wg0 or Docker config changes
+
+[Timer]
+OnBootSec=1min
+OnUnitInactiveSec=1min
+Unit=wgd-wg-port-sync.service
+
+[Install]
+WantedBy=timers.target
