@@ -49,6 +49,8 @@ jobs:
         run: python3 tests/test_ui_pagination.py
       - name: Persistent WireGuard MTU on GRE installs
         run: python3 tests/test_wireguard_mtu.py
+      - name: Docker WireGuard UDP port synchronization and property regressions
+        run: python3 tests/test_wg_port_sync.py
       - name: Peer QR and auth handling regression
         run: node tests/test_peer_qr_auth.mjs
       - name: UI-only peer bulk manager and unchanged API contract
@@ -68,6 +70,10 @@ jobs:
         run: shellcheck -S warning install.sh deploy/wgdashbackup.sh deploy/wgd-watchdog.sh tests/smoke.sh tests/run_synthetic_benchmark.sh
       - name: Compose parse
         run: docker compose -f deploy/compose.yaml config -q
+      - name: Compose preserves client port while targeting the live WireGuard port
+        run: |
+          WGD_WG_PUBLIC_PORT=51820 WGD_WG_LISTEN_PORT=51821 docker compose -f deploy/compose.yaml config --format json |
+            python3 -c 'import json,sys; d=json.load(sys.stdin); p=d["services"]["wgdashboard"]["ports"]; w=[x for x in p if x["protocol"]=="udp"]; assert len(w)==1 and w[0]["published"]=="51820" and w[0]["target"]==51821, w'
       - name: Installer dry run (read-only)
         run: WIREDASH_SOURCE_SHA=${{ github.event.pull_request.head.sha || github.sha }} bash install.sh --dry-run
       - name: Single-command contract
