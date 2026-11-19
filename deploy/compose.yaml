@@ -18,7 +18,8 @@ services:
       WGD_API_AUDIT: "${WGD_API_AUDIT:-0}"
     ports:
       - "${WGD_PANEL_BIND:-0.0.0.0}:${WGD_PORT:-10086}:${WGD_PORT:-10086}/tcp"
-      - "51820:51820/udp"
+      # Stable client-facing UDP port; target is the persisted wg0 ListenPort.
+      - "${WGD_WG_PUBLIC_PORT:-51820}:${WGD_WG_LISTEN_PORT:-51820}/udp"
     volumes:
       - aconf:/etc/amnezia/amneziawg
       - conf:/etc/wireguard
